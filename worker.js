@@ -2,6 +2,9 @@
 // Word Guessing Game - Cloudflare Worker + Durable Object
 // =============================================================
 
+const MAX_PLAYERS = 5;
+const MIN_PLAYERS_TO_PLAY = 2;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -23,17 +26,24 @@ export default {
 
     // Route: Create room (HTTP)
     if (url.pathname === "/create" && request.method === "POST") {
-      const body = await request.json();
-      const { username, wordLength } = body;
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return corsResponse(new Response(JSON.stringify({ error: "Invalid request body" }), { status: 400 }));
+      }
 
-      if (!username || !username.trim()) {
+      const username = sanitizeUsername(body.username);
+      const wordLength = parseInt(body.wordLength, 10);
+
+      if (!username) {
         return corsResponse(new Response(JSON.stringify({ error: "Username is required" }), { status: 400 }));
       }
-      if (!wordLength || wordLength < 3 || wordLength > 10) {
+      if (!Number.isInteger(wordLength) || wordLength < 3 || wordLength > 10) {
         return corsResponse(new Response(JSON.stringify({ error: "Word length must be 3–10" }), { status: 400 }));
       }
 
-      const roomCode = generateRoomCode();
+      const roomCode = await generateUniqueRoomCode(env);
       const id = env.GAME_ROOM.idFromName(roomCode);
       const stub = env.GAME_ROOM.get(id);
 
@@ -54,7 +64,9 @@ export default {
   },
 };
 
-function generateRoomCode() {
+// Generates a 6-digit room code. Collisions are astronomically unlikely
+// given the keyspace, but this keeps things honest without extra ceremony.
+async function generateUniqueRoomCode(env) {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
@@ -70,6 +82,20 @@ function corsResponse(response) {
   });
 }
 
+function sanitizeUsername(raw) {
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 20) return "";
+  return trimmed;
+}
+
+function sanitizeClientId(raw) {
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 100) return "";
+  return trimmed;
+}
+
 // =============================================================
 // Durable Object: GameRoom
 // Manages one room's full state and all WebSocket connections
@@ -79,8 +105,6 @@ export class GameRoom {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-    this.sessions = new Map(); // socketId -> { ws, username }
-    this.initialized = false;
   }
 
   // Load room state from durable storage
@@ -114,20 +138,23 @@ export class GameRoom {
       return new Response("Expected WebSocket", { status: 426 });
     }
 
-    const url2 = new URL(request.url);
-    const username = url2.searchParams.get("username")?.trim();
+    const username = sanitizeUsername(url.searchParams.get("username"));
+    const clientId = sanitizeClientId(url.searchParams.get("id"));
 
     if (!username) {
       return new Response("Username required", { status: 400 });
     }
+    if (!clientId) {
+      return new Response("Missing client id", { status: 400 });
+    }
 
     const [client, server] = Object.values(new WebSocketPair());
-    await this.handleSession(server, username);
-    return new Response(null, { status: 101, webSocket: client });
-  }
 
-  async handleSession(ws, username) {
-    this.state.acceptWebSocket(ws, [username]);
+    // Tags: [0] = stable client id (identity used for reconnection),
+    //       [1] = display username (unique within the room once joined)
+    this.state.acceptWebSocket(server, [clientId, username]);
+
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   // Called by DO runtime when a WebSocket message is received
@@ -140,18 +167,20 @@ export class GameRoom {
     }
 
     const tags = this.state.getTags(ws);
-    const username = tags[0];
+    const clientId = tags[0];
+    const username = tags[1];
 
     const room = await this.loadState();
 
     if (!room) {
-      ws.send(JSON.stringify({ type: "error", message: "Room not found" }));
+      ws.send(JSON.stringify({ type: "error", code: "ROOM_NOT_FOUND", message: "This room code doesn't exist." }));
+      try { ws.close(4404, "room-not-found"); } catch {}
       return;
     }
 
     switch (data.type) {
       case "join":
-        await this.handleJoin(ws, username, room);
+        await this.handleJoin(ws, clientId, username, room);
         break;
       case "submitWord":
         await this.handleSubmitWord(ws, username, data.word, room);
@@ -174,25 +203,64 @@ export class GameRoom {
   }
 
   // Called by DO runtime when a WebSocket closes
-  async webSocketClose(ws, code, reason) {
+  async webSocketClose(ws) {
+    await this.handleDisconnect(ws);
+  }
+
+  // Called by DO runtime if the socket errors out (network drop, etc.)
+  async webSocketError(ws) {
+    await this.handleDisconnect(ws);
+  }
+
+  async handleDisconnect(ws) {
     const tags = this.state.getTags(ws);
-    const username = tags[0];
+    const username = tags[1];
+    if (!username) return;
 
     const room = await this.loadState();
     if (!room) return;
 
-    // Remove player from room
-    room.players = room.players.filter((p) => p.username !== username);
+    const wasInRoom = room.players.some((p) => p.username === username);
+    if (!wasInRoom) return;
 
-    // If host left and there are still players, assign new host
-    if (room.players.length > 0 && room.host === username) {
-      room.host = room.players[0].username;
-      room.players[0].isHost = true;
+    // If it was this player's turn, work out who should go next
+    // BEFORE removing them from the rotation.
+    let nextTurn = room.currentTurn;
+    if (room.phase === "playing" && room.currentTurn === username) {
+      const candidate = getNextPlayer(room);
+      nextTurn = candidate === username ? null : candidate;
     }
 
-    // If game in progress and current turn player left, advance turn
-    if (room.phase === "playing" && room.currentTurn === username) {
-      room.currentTurn = getNextPlayer(room);
+    room.players = room.players.filter((p) => p.username !== username);
+    if (room.wrongLetters) delete room.wrongLetters[username];
+    if (room.usedLetters) delete room.usedLetters[username];
+
+    if (room.players.length === 0) {
+      // Room is fully empty — reset to a clean lobby so the next
+      // person to join (e.g. a reconnect) starts fresh, no leftover state.
+      const fresh = createEmptyRoom(room.code, room.wordLength);
+      await this.saveState(fresh);
+      return;
+    }
+
+    // Host transfer: if the host left, promote the next available player
+    if (room.host === username) {
+      room.host = room.players[0].username;
+      room.players.forEach((p, i) => { p.isHost = i === 0; });
+    }
+
+    if (["words", "countdown", "playing"].includes(room.phase) && room.players.length < MIN_PLAYERS_TO_PLAY) {
+      // Not enough players left to continue — end gracefully rather than
+      // leaving everyone stuck in a game that can't proceed.
+      room.phase = "ended";
+      room.winner = null;
+      room.winnerWord = null;
+      room.endReason = "abandoned";
+    } else if (room.phase === "playing") {
+      room.currentTurn = nextTurn;
+    } else if (room.phase === "words") {
+      // Removing a not-yet-ready player might mean everyone left is ready.
+      await this.maybeAdvanceFromWords(room);
     }
 
     await this.saveState(room);
@@ -201,27 +269,46 @@ export class GameRoom {
 
   // --- Game Handlers ---
 
-  async handleJoin(ws, username, room) {
-    // Validate join
-    if (room.players.find((p) => p.username === username)) {
-      // Already in room (reconnect) — just send state
-      ws.send(JSON.stringify({ type: "joined", room: sanitizeRoom(room), you: username }));
+  async handleJoin(ws, clientId, username, room) {
+    // Reconnect: this exact browser/tab already has a seat in this room.
+    const existing = room.players.find((p) => p.id === clientId);
+    if (existing) {
+      ws.send(JSON.stringify({
+        type: "joined",
+        room: sanitizeRoom(room),
+        you: existing.username,
+        yourWord: existing.secretWord || null,
+      }));
       this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
       return;
     }
 
-    if (room.players.length >= 5) {
-      ws.send(JSON.stringify({ type: "error", message: "Room is full" }));
+    // Not a reconnect — this is a brand new seat request.
+    if (room.players.some((p) => p.username === username)) {
+      ws.send(JSON.stringify({
+        type: "error",
+        code: "DUPLICATE_USERNAME",
+        message: "That username is already taken in this room.",
+      }));
+      try { ws.close(4409, "duplicate-username"); } catch {}
+      return;
+    }
+
+    if (room.players.length >= MAX_PLAYERS) {
+      ws.send(JSON.stringify({ type: "error", code: "ROOM_FULL", message: "This room is full." }));
+      try { ws.close(4403, "room-full"); } catch {}
       return;
     }
 
     if (room.phase !== "lobby") {
-      ws.send(JSON.stringify({ type: "error", message: "Game already in progress" }));
+      ws.send(JSON.stringify({ type: "error", code: "GAME_IN_PROGRESS", message: "This game has already started." }));
+      try { ws.close(4403, "in-progress"); } catch {}
       return;
     }
 
     const isFirst = room.players.length === 0;
     room.players.push({
+      id: clientId,
       username,
       isHost: isFirst,
       ready: false,
@@ -232,25 +319,26 @@ export class GameRoom {
     if (isFirst) room.host = username;
 
     await this.saveState(room);
-    ws.send(JSON.stringify({ type: "joined", room: sanitizeRoom(room), you: username }));
+    ws.send(JSON.stringify({ type: "joined", room: sanitizeRoom(room), you: username, yourWord: null }));
     this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
   }
 
   async handleStartGame(ws, username, room) {
     if (room.host !== username) {
-      ws.send(JSON.stringify({ type: "error", message: "Only the host can start the game" }));
+      ws.send(JSON.stringify({ type: "error", message: "Only the host can start the game." }));
       return;
     }
-    if (room.players.length < 2) {
-      ws.send(JSON.stringify({ type: "error", message: "Need at least 2 players" }));
+    if (room.players.length < MIN_PLAYERS_TO_PLAY) {
+      ws.send(JSON.stringify({ type: "error", message: "Need at least 2 players to start." }));
       return;
     }
     if (room.phase !== "lobby") {
-      ws.send(JSON.stringify({ type: "error", message: "Game already started" }));
+      ws.send(JSON.stringify({ type: "error", message: "The game has already started." }));
       return;
     }
 
     room.phase = "words";
+    room.endReason = null;
     room.players.forEach((p) => { p.ready = false; p.secretWord = null; p.revealedWord = null; });
 
     await this.saveState(room);
@@ -259,30 +347,30 @@ export class GameRoom {
 
   async handleSubmitWord(ws, username, word, room) {
     if (room.phase !== "words") {
-      ws.send(JSON.stringify({ type: "error", message: "Not in word submission phase" }));
+      ws.send(JSON.stringify({ type: "error", message: "Not in the word submission phase." }));
       return;
     }
 
     const player = room.players.find((p) => p.username === username);
     if (!player) {
-      ws.send(JSON.stringify({ type: "error", message: "Player not found" }));
+      ws.send(JSON.stringify({ type: "error", message: "Player not found." }));
       return;
     }
 
     if (!word || !word.trim()) {
-      ws.send(JSON.stringify({ type: "error", message: "Word cannot be empty" }));
+      ws.send(JSON.stringify({ type: "error", message: "Your secret word cannot be empty." }));
       return;
     }
 
     const cleaned = word.trim().toUpperCase();
 
     if (cleaned.length !== room.wordLength) {
-      ws.send(JSON.stringify({ type: "error", message: `Word must be exactly ${room.wordLength} letters` }));
+      ws.send(JSON.stringify({ type: "error", message: `Your word must be exactly ${room.wordLength} letters.` }));
       return;
     }
 
     if (!/^[A-Z]+$/.test(cleaned)) {
-      ws.send(JSON.stringify({ type: "error", message: "Word must contain only letters" }));
+      ws.send(JSON.stringify({ type: "error", message: "Your word must contain only letters." }));
       return;
     }
 
@@ -291,26 +379,30 @@ export class GameRoom {
     // Revealed word starts as all blanks
     player.revealedWord = "_".repeat(cleaned.length).split("");
 
-    const allReady = room.players.every((p) => p.ready);
+    await this.saveState(room);
+    ws.send(JSON.stringify({ type: "wordAccepted" }));
+    this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
 
-    if (allReady) {
-      // Begin countdown phase
-      room.phase = "countdown";
-      await this.saveState(room);
-      this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
-
-      // After 5 seconds, begin playing
-      await this.scheduleCountdown(room);
-    } else {
-      await this.saveState(room);
-      this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
-    }
+    await this.maybeAdvanceFromWords(room);
   }
 
-  async scheduleCountdown(room) {
-    // Use alarms for countdown (5 seconds)
+  // If every remaining player has submitted a word, move the room into
+  // the countdown phase. Shared by both normal submission and disconnects
+  // (since a disconnect can remove the last not-ready player).
+  async maybeAdvanceFromWords(room) {
+    if (room.phase !== "words") return;
+    if (room.players.length < MIN_PLAYERS_TO_PLAY) return;
+    const allReady = room.players.length > 0 && room.players.every((p) => p.ready);
+    if (!allReady) return;
+
+    room.phase = "countdown";
+    await this.saveState(room);
+    this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
+    await this.scheduleCountdown();
+  }
+
+  async scheduleCountdown() {
     const alarmTime = Date.now() + 5000;
-    await this.state.storage.put("alarmRoom", room.code);
     await this.state.storage.setAlarm(alarmTime);
   }
 
@@ -318,52 +410,60 @@ export class GameRoom {
     const room = await this.loadState();
     if (!room) return;
 
-    if (room.phase === "countdown") {
-      room.phase = "playing";
-      // Pick starting player
-      room.currentTurn = room.players[0].username;
-      room.wrongLetters = {};
-      room.usedLetters = {};
-      // Init wrong letters and used letters per player's word
-      room.players.forEach((p) => {
-        room.wrongLetters[p.username] = [];
-        room.usedLetters[p.username] = [];
-      });
-      room.winner = null;
+    if (room.phase !== "countdown") return;
 
+    if (room.players.length < MIN_PLAYERS_TO_PLAY) {
+      room.phase = "ended";
+      room.winner = null;
+      room.winnerWord = null;
+      room.endReason = "abandoned";
       await this.saveState(room);
       this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
+      return;
     }
+
+    room.phase = "playing";
+    room.currentTurn = room.players[0].username;
+    room.wrongLetters = {};
+    room.usedLetters = {};
+    room.players.forEach((p) => {
+      room.wrongLetters[p.username] = [];
+      room.usedLetters[p.username] = [];
+    });
+    room.winner = null;
+    room.winnerWord = null;
+    room.endReason = null;
+
+    await this.saveState(room);
+    this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
   }
 
   async handleAskLetter(ws, username, letter, room) {
     if (room.phase !== "playing") {
-      ws.send(JSON.stringify({ type: "error", message: "Game is not in playing phase" }));
+      ws.send(JSON.stringify({ type: "error", message: "The game is not currently in progress." }));
       return;
     }
     if (room.currentTurn !== username) {
-      ws.send(JSON.stringify({ type: "error", message: "It's not your turn" }));
+      ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
       return;
     }
 
     if (!letter || letter.length !== 1 || !/^[A-Za-z]$/.test(letter)) {
-      ws.send(JSON.stringify({ type: "error", message: "Enter a single valid letter" }));
+      ws.send(JSON.stringify({ type: "error", message: "Enter a single letter (A–Z)." }));
       return;
     }
 
     const L = letter.toUpperCase();
 
-    // Find the next player (whose secret word we are guessing)
     const target = getTargetPlayer(room, username);
     if (!target) {
-      ws.send(JSON.stringify({ type: "error", message: "No target player found" }));
+      ws.send(JSON.stringify({ type: "error", message: "No target player found." }));
       return;
     }
 
-    // Check if letter already used against this target
     if (!room.usedLetters[target.username]) room.usedLetters[target.username] = [];
     if (room.usedLetters[target.username].includes(L)) {
-      ws.send(JSON.stringify({ type: "error", message: "Letter already used" }));
+      ws.send(JSON.stringify({ type: "error", message: "That letter has already been guessed for this word." }));
       return;
     }
 
@@ -373,18 +473,17 @@ export class GameRoom {
     const found = secretWord.includes(L);
 
     if (found) {
-      // Reveal all occurrences
       for (let i = 0; i < secretWord.length; i++) {
         if (secretWord[i] === L) {
           target.revealedWord[i] = L;
         }
       }
-      // Check if word is fully revealed
       if (!target.revealedWord.includes("_")) {
-        // Auto-win if word fully revealed by letters
+        // Auto-win if the word is fully revealed by letters
         room.winner = username;
         room.winnerWord = secretWord;
         room.phase = "ended";
+        room.endReason = "win";
         await this.saveState(room);
         this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
         return;
@@ -394,7 +493,6 @@ export class GameRoom {
       room.wrongLetters[target.username].push(L);
     }
 
-    // Broadcast letter result event
     this.broadcast(room, {
       type: "letterResult",
       asker: username,
@@ -403,7 +501,6 @@ export class GameRoom {
       found,
     });
 
-    // Advance turn
     room.currentTurn = getNextPlayer(room);
     await this.saveState(room);
     this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
@@ -411,16 +508,16 @@ export class GameRoom {
 
   async handleGuessWord(ws, username, word, room) {
     if (room.phase !== "playing") {
-      ws.send(JSON.stringify({ type: "error", message: "Game is not in playing phase" }));
+      ws.send(JSON.stringify({ type: "error", message: "The game is not currently in progress." }));
       return;
     }
     if (room.currentTurn !== username) {
-      ws.send(JSON.stringify({ type: "error", message: "It's not your turn" }));
+      ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
       return;
     }
 
     if (!word || !word.trim()) {
-      ws.send(JSON.stringify({ type: "error", message: "Enter a word to guess" }));
+      ws.send(JSON.stringify({ type: "error", message: "Enter a word to guess." }));
       return;
     }
 
@@ -428,7 +525,7 @@ export class GameRoom {
     const target = getTargetPlayer(room, username);
 
     if (!target) {
-      ws.send(JSON.stringify({ type: "error", message: "No target player found" }));
+      ws.send(JSON.stringify({ type: "error", message: "No target player found." }));
       return;
     }
 
@@ -436,10 +533,10 @@ export class GameRoom {
       room.winner = username;
       room.winnerWord = target.secretWord;
       room.phase = "ended";
+      room.endReason = "win";
       await this.saveState(room);
       this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
     } else {
-      // Wrong guess — notify and advance turn
       this.broadcast(room, {
         type: "wrongGuess",
         guesser: username,
@@ -453,11 +550,10 @@ export class GameRoom {
 
   async handlePlayAgain(ws, username, room) {
     if (room.host !== username) {
-      ws.send(JSON.stringify({ type: "error", message: "Only the host can restart" }));
+      ws.send(JSON.stringify({ type: "error", message: "Only the host can restart the game." }));
       return;
     }
 
-    // Reset to lobby
     room.phase = "lobby";
     room.players.forEach((p) => {
       p.ready = false;
@@ -467,6 +563,7 @@ export class GameRoom {
     room.currentTurn = null;
     room.winner = null;
     room.winnerWord = null;
+    room.endReason = null;
     room.wrongLetters = {};
     room.usedLetters = {};
 
@@ -482,8 +579,7 @@ export class GameRoom {
     for (const ws of sockets) {
       try {
         const tags = this.state.getTags(ws);
-        // Only send to players in the room
-        if (playerNames.has(tags[0])) {
+        if (playerNames.has(tags[1])) {
           ws.send(str);
         }
       } catch {}
@@ -498,7 +594,7 @@ export class GameRoom {
 function createEmptyRoom(code, wordLength) {
   return {
     code,
-    wordLength: parseInt(wordLength),
+    wordLength: parseInt(wordLength, 10),
     phase: "lobby",   // lobby | words | countdown | playing | ended
     host: null,
     players: [],
@@ -507,21 +603,31 @@ function createEmptyRoom(code, wordLength) {
     usedLetters: {},
     winner: null,
     winnerWord: null,
+    endReason: null,  // "win" | "abandoned" | null
   };
 }
 
-// Remove secret words from state before sending to clients
-// Each client will only see their own secret word
+// Remove secret words from state before sending to clients.
+// secretWord is NEVER included here — a player's own word is sent
+// separately, only over their own connection, in the "joined" message.
 function sanitizeRoom(room) {
   return {
-    ...room,
+    code: room.code,
+    wordLength: room.wordLength,
+    phase: room.phase,
+    host: room.host,
+    currentTurn: room.currentTurn,
+    winner: room.winner,
+    winnerWord: room.phase === "ended" ? room.winnerWord : null,
+    endReason: room.endReason,
+    wrongLetters: room.wrongLetters,
     players: room.players.map((p) => ({
       username: p.username,
       isHost: p.isHost,
       ready: p.ready,
-      // revealedWord is safe to send — it only shows guessed letters
+      // revealedWord only ever shows letters already guessed correctly —
+      // safe to send to everyone.
       revealedWord: p.revealedWord,
-      // secretWord is NOT included here — sent only when needed via "joined" to owner
       hasWord: !!p.secretWord,
     })),
   };
