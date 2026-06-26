@@ -1,0 +1,16 @@
+name = "wordgame-worker"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Durable Objects binding
+[[durable_objects.bindings]]
+name = "GAME_ROOM"
+class_name = "GameRoom"
+
+# Durable Object migrations (required on first deploy)
+[[migrations]]
+tag = "v1"
+new_classes = ["GameRoom"]
+
+[observability]
+enabled = true

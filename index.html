@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WordGuess – Multiplayer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Toast notification ── -->
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <!-- ══════════════════════════════════════════
+       SCREEN: Home
+  ══════════════════════════════════════════ -->
+  <div id="screen-home" class="screen active">
+    <div class="card center-card">
+      <h1 class="logo">WordGuess</h1>
+      <p class="subtitle">Multiplayer word guessing game</p>
+
+      <div class="field">
+        <label for="home-username">Your name</label>
+        <input id="home-username" type="text" maxlength="20" placeholder="Enter username" autocomplete="off" />
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-create" class="btn btn-primary">Create Room</button>
+        <button id="btn-join-show" class="btn btn-secondary">Join Room</button>
+      </div>
+
+      <!-- Join sub-form (hidden by default) -->
+      <div id="join-form" class="join-form hidden">
+        <div class="field">
+          <label for="join-code">Room Code</label>
+          <input id="join-code" type="text" maxlength="6" placeholder="6-digit code" autocomplete="off" />
+        </div>
+        <button id="btn-join" class="btn btn-primary">Join</button>
+      </div>
+
+      <!-- Create sub-form (hidden by default) -->
+      <div id="create-form" class="join-form hidden">
+        <div class="field">
+          <label for="word-length">Word length</label>
+          <select id="word-length">
+            <option value="3">3 letters</option>
+            <option value="4">4 letters</option>
+            <option value="5" selected>5 letters</option>
+            <option value="6">6 letters</option>
+            <option value="7">7 letters</option>
+            <option value="8">8 letters</option>
+            <option value="9">9 letters</option>
+            <option value="10">10 letters</option>
+          </select>
+        </div>
+        <button id="btn-create-confirm" class="btn btn-primary">Create &amp; Enter Lobby</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       SCREEN: Lobby
+  ══════════════════════════════════════════ -->
+  <div id="screen-lobby" class="screen">
+    <div class="card">
+      <h2>Lobby</h2>
+
+      <div class="room-code-box">
+        <span class="label">Room Code</span>
+        <span id="lobby-code" class="code-display">––––––</span>
+        <button id="btn-copy-code" class="btn btn-small">Copy</button>
+      </div>
+
+      <p class="hint">Share the code with friends. Waiting for players…</p>
+
+      <div id="lobby-players" class="player-list"></div>
+
+      <button id="btn-start" class="btn btn-primary hidden">Start Game</button>
+      <p id="lobby-waiting" class="muted">Waiting for host to start…</p>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       SCREEN: Word Submission
+  ══════════════════════════════════════════ -->
+  <div id="screen-words" class="screen">
+    <div class="card">
+      <h2>Enter Your Secret Word</h2>
+      <p id="word-length-hint" class="hint"></p>
+
+      <div class="field">
+        <label for="secret-word-input">Your secret word</label>
+        <input id="secret-word-input" type="text" autocomplete="off" autocorrect="off"
+               spellcheck="false" placeholder="Only you will see this" />
+      </div>
+
+      <button id="btn-ready" class="btn btn-primary">Ready</button>
+
+      <div id="words-player-list" class="player-list" style="margin-top:1.5rem;"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       SCREEN: Countdown
+  ══════════════════════════════════════════ -->
+  <div id="screen-countdown" class="screen">
+    <div class="card center-card">
+      <p class="hint">Game starting in</p>
+      <div id="countdown-number" class="countdown-num">5</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       SCREEN: Playing
+  ══════════════════════════════════════════ -->
+  <div id="screen-playing" class="screen">
+    <div class="card game-card">
+
+      <!-- Turn banner -->
+      <div id="turn-banner" class="turn-banner">
+        <span id="turn-label"></span>
+      </div>
+
+      <!-- Word display (the word being guessed — the one belonging to the target player) -->
+      <div class="word-section">
+        <p class="label">Word to guess <span id="target-label" class="muted small"></span></p>
+        <div id="hidden-word" class="hidden-word"></div>
+      </div>
+
+      <!-- Wrong letters -->
+      <div class="wrong-section">
+        <p class="label">Wrong letters</p>
+        <div id="wrong-letters" class="wrong-letters"></div>
+      </div>
+
+      <!-- Your own word (visible only to you) -->
+      <div class="own-word-section">
+        <p class="label">Your secret word <span class="muted small">(only you see this)</span></p>
+        <div id="own-word" class="own-word"></div>
+      </div>
+
+      <!-- Controls (only active on your turn) -->
+      <div id="controls" class="controls hidden">
+        <div class="control-group">
+          <div class="field inline">
+            <input id="letter-input" type="text" maxlength="1" placeholder="A"
+                   autocomplete="off" autocorrect="off" spellcheck="false" class="letter-input" />
+            <button id="btn-ask" class="btn btn-primary">Ask Letter</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <div class="field inline">
+            <input id="guess-input" type="text" placeholder="Full word guess"
+                   autocomplete="off" autocorrect="off" spellcheck="false" />
+            <button id="btn-guess" class="btn btn-secondary">Guess Word</button>
+          </div>
+        </div>
+      </div>
+
+      <p id="waiting-turn" class="muted hidden">Waiting for your turn…</p>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       SCREEN: End
+  ══════════════════════════════════════════ -->
+  <div id="screen-ended" class="screen">
+    <div class="card center-card">
+      <div class="winner-trophy">🏆</div>
+      <h2 id="winner-name" class="winner-title"></h2>
+      <p class="hint">guessed the word</p>
+      <div id="winner-word" class="winner-word"></div>
+
+      <button id="btn-play-again" class="btn btn-primary hidden">Play Again</button>
+      <p id="waiting-host" class="muted hidden">Waiting for host to restart…</p>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
