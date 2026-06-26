@@ -412,6 +412,13 @@ select:focus {
   text-transform: uppercase;
 }
 
+/* Letter in your own word that the opponent has already guessed correctly */
+.own-letter.opponent-found {
+  background: #bbf7d0;
+  color: #15803d;
+  border: 2px solid #4ade80;
+}
+
 /* Controls */
 .controls {
   border-top: 1.5px solid var(--border);

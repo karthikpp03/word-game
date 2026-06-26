@@ -121,8 +121,16 @@ function connectWebSocket() {
     state.ws = null;
   }
 
-  const wsUrl = WORKER_URL.replace(/^https?/, "wss")
-    + `/room/${state.roomCode}?username=${encodeURIComponent(state.username)}`;
+    let clientId = localStorage.getItem("clientId");
+
+    if (!clientId) {
+        clientId = crypto.randomUUID();
+        localStorage.setItem("clientId", clientId);
+    }
+
+    const wsUrl =
+    WORKER_URL.replace(/^https?/, "wss") +
+    `/room/${state.roomCode}?username=${encodeURIComponent(state.username)}&id=${encodeURIComponent(clientId)}`;
 
   const ws = new WebSocket(wsUrl);
   state.ws = ws;
@@ -158,6 +166,8 @@ function handleMessage(msg) {
   switch (msg.type) {
     case "joined":
       state.room = msg.room;
+      // Restore own secret word from server (handles reconnects too)
+      if (msg.yourWord) state.mySecretWord = msg.yourWord;
       renderCurrentPhase();
       break;
 
@@ -339,25 +349,25 @@ function renderPlaying() {
     ? "Your turn!"
     : `${room.currentTurn}'s turn`;
 
-  // Find who I am and who the target is (next player)
   const players = room.players;
   const myIdx = players.findIndex((p) => p.username === state.username);
-  const targetIdx = (myIdx + 1) % players.length;
-  const target = players[targetIdx];
 
-  // Show the target player's revealed word (what I'm guessing)
-  const guessingPlayer = players[(players.findIndex(
-    (p) => p.username === room.currentTurn) + 1) % players.length];
+  // Each player always guesses the word of the player immediately after them.
+  // This never changes — it is always MY permanent target, not whoever is
+  // currently guessing's target.
+  const myTarget = players[(myIdx + 1) % players.length];
 
-  $("target-label").textContent = `(${guessingPlayer?.username}'s word)`;
-  renderHiddenWord(guessingPlayer?.revealedWord || []);
+  // "Word to guess" panel: always shows MY target's revealed word (partially hidden)
+  $("target-label").textContent = myTarget ? `(${myTarget.username}'s word)` : "";
+  renderHiddenWord(myTarget?.revealedWord || []);
 
-  // Wrong letters for the target's word
-  const wrongLetters = room.wrongLetters?.[guessingPlayer?.username] || [];
+  // Wrong letters: letters I have personally guessed wrong against my target
+  const wrongLetters = room.wrongLetters?.[myTarget?.username] || [];
   renderWrongLetters(wrongLetters);
 
-  // My own word (always visible to me)
-  const me = players.find((p) => p.username === state.username);
+  // My own word: show my actual secret word with green highlights for letters
+  // the opponent has already found (tracked via revealedWord on the server)
+  const me = players[myIdx];
   renderOwnWord(me?.revealedWord || []);
 
   // Show controls only on my turn
@@ -400,16 +410,23 @@ function renderWrongLetters(letters) {
 function renderOwnWord(revealedWord) {
   const container = $("own-word");
   container.innerHTML = "";
-  if (!revealedWord || revealedWord.length === 0) return;
-  revealedWord.forEach((ch, i) => {
+  if (!state.mySecretWord && (!revealedWord || revealedWord.length === 0)) return;
+
+  // Use the server-tracked revealedWord to know which positions the
+  // opponent has already guessed correctly (those are highlighted green).
+  // Always display the full actual word (from state.mySecretWord).
+  const word = state.mySecretWord || "";
+  const length = word.length || (revealedWord ? revealedWord.length : 0);
+
+  for (let i = 0; i < length; i++) {
     const box = document.createElement("div");
-    box.className = "own-letter";
-    // For your own word, show the real letters if available
-    // The server sends revealedWord which starts masked, but for the owner
-    // we want to show their actual word — so we stored it locally on submission
-    box.textContent = state.mySecretWord ? state.mySecretWord[i] : (ch !== "_" ? ch : "_");
+    const letter = word[i] || (revealedWord[i] !== "_" ? revealedWord[i] : "?");
+    const opponentFound = revealedWord && revealedWord[i] && revealedWord[i] !== "_";
+    // "opponent-found" = this letter has been discovered by the player guessing my word
+    box.className = "own-letter" + (opponentFound ? " opponent-found" : "");
+    box.textContent = letter;
     container.appendChild(box);
-  });
+  }
 }
 
 // Track own word locally to always display it
