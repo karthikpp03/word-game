@@ -4,7 +4,7 @@
 
 // ── Config ──────────────────────────────────────────────────
 // Replace with your deployed Worker URL after deploying
-const WORKER_URL = "https://wordgame-worker.<YOUR_SUBDOMAIN>.workers.dev";
+const WORKER_URL = "https://word-game.zeus-karthik11.workers.dev";
 
 // =============================================================
 // State
