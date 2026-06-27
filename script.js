@@ -14,6 +14,7 @@ const state = {
   ws: null,
   mySecretWord: null,
   countdownTimer: null,
+  pendingSuggestion: null,   // { from, suggestionType, value }
 };
 
 // =============================================================
@@ -61,6 +62,7 @@ $("btn-join-show").addEventListener("click", () => {
 $("btn-create-confirm").addEventListener("click", async () => {
   const username = $("home-username").value.trim();
   const wordLength = parseInt($("word-length").value);
+  const gameMode = document.querySelector('input[name="game-mode"]:checked')?.value || "classic";
   if (!username) { toast("Enter a username", "error"); return; }
 
   const btn = $("btn-create-confirm");
@@ -71,7 +73,7 @@ $("btn-create-confirm").addEventListener("click", async () => {
     const res = await fetch(`${WORKER_URL}/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, wordLength }),
+      body: JSON.stringify({ username, wordLength, gameMode }),
     });
     const data = await res.json();
     if (!res.ok) { toast(data.error || "Failed to create room", "error"); return; }
@@ -168,6 +170,10 @@ function handleMessage(msg) {
       toast(`❌  "${msg.guess}" is wrong — ${msg.guesser} keeps trying!`, "error");
       break;
 
+    case "suggestion":
+      showSuggestionPopup(msg);
+      break;
+
     case "error":
       toast(msg.message, "error");
       break;
@@ -182,6 +188,7 @@ function renderCurrentPhase() {
   if (!room) return;
   switch (room.phase) {
     case "lobby":     renderLobby();     break;
+    case "teams":     renderTeams();     break;
     case "words":     renderWords();     break;
     case "countdown": renderCountdown(); break;
     case "playing":   renderPlaying();   break;
@@ -197,6 +204,15 @@ function renderLobby() {
   const room = state.room;
 
   $("lobby-code").textContent = room.code;
+
+  // Show mode badge
+  const modeBadge = $("lobby-mode-badge");
+  if (room.gameMode === "team") {
+    modeBadge.textContent = "⚔️ Team Battle Mode";
+    modeBadge.classList.remove("hidden");
+  } else {
+    modeBadge.classList.add("hidden");
+  }
 
   const list = $("lobby-players");
   list.innerHTML = "";
@@ -252,6 +268,118 @@ $("btn-start").addEventListener("click", () => {
 });
 
 // =============================================================
+// Team Selection Screen
+// =============================================================
+function renderTeams() {
+  showScreen("teams");
+  const room = state.room;
+  const teams = room.teams || { A: { members: [], leader: null }, B: { members: [], leader: null } };
+  const myTeam = ["A", "B"].find(t => teams[t].members.includes(state.username)) || null;
+
+  // Render each team
+  ["A", "B"].forEach(t => {
+    const listEl = $(`team-${t.toLowerCase()}-players`);
+    const leaderRow = $(`team-${t.toLowerCase()}-leader-row`);
+    const leaderName = $(`team-${t.toLowerCase()}-leader-name`);
+    listEl.innerHTML = "";
+
+    teams[t].members.forEach(member => {
+      const isLeader = teams[t].leader === member;
+      const isMe = member === state.username;
+      const div = document.createElement("div");
+      div.className = "team-player-item";
+      div.innerHTML = `
+        <span class="team-player-avatar">${isLeader ? "👑" : "👤"}</span>
+        <span class="team-player-name${isLeader ? " is-leader" : ""}">${member}${isMe ? " (You)" : ""}</span>
+        ${myTeam === t && !isMe ? `<button class="btn btn-set-leader btn-xs" data-target="${member}" data-team="${t}">Set Leader</button>` : ""}
+      `;
+      listEl.appendChild(div);
+    });
+
+    if (teams[t].members.length === 0) {
+      listEl.innerHTML = `<div class="team-empty">No players yet</div>`;
+    }
+
+    if (teams[t].leader) {
+      leaderRow.classList.remove("hidden");
+      leaderName.textContent = teams[t].leader;
+    } else {
+      leaderRow.classList.add("hidden");
+    }
+  });
+
+  // "Set Leader" button handlers (delegated)
+  document.querySelectorAll(".btn-set-leader").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.target;
+      send({ type: "setLeader", target });
+    });
+  });
+
+  // Join team buttons
+  const joinA = $("btn-join-team-a");
+  const joinB = $("btn-join-team-b");
+
+  joinA.textContent = myTeam === "A" ? "✓ On Team A" : "Join Team A";
+  joinB.textContent = myTeam === "B" ? "✓ On Team B" : "Join Team B";
+  joinA.classList.toggle("active-team", myTeam === "A");
+  joinB.classList.toggle("active-team", myTeam === "B");
+
+  // Host controls
+  const isHost = room.host === state.username;
+  $("teams-host-controls").classList.toggle("hidden", !isHost);
+  $("teams-waiting-msg").classList.toggle("hidden", isHost);
+
+  if (isHost) {
+    const { canStart, reason } = getTeamStartValidation(room);
+    const startBtn = $("btn-teams-start");
+    startBtn.disabled = !canStart;
+    $("teams-start-reason").textContent = canStart ? "" : reason;
+    $("teams-start-reason").classList.toggle("hidden", canStart);
+  }
+}
+
+function getTeamStartValidation(room) {
+  const teams = room.teams || {};
+  const allPlayers = room.players.map(p => p.username);
+
+  const assignedPlayers = [
+    ...(teams.A?.members || []),
+    ...(teams.B?.members || []),
+  ];
+  const unassigned = allPlayers.filter(p => !assignedPlayers.includes(p));
+
+  if (unassigned.length > 0) {
+    return { canStart: false, reason: `Waiting for all players to join a team…` };
+  }
+  if ((teams.A?.members || []).length === 0) {
+    return { canStart: false, reason: "Waiting for Team A…" };
+  }
+  if ((teams.B?.members || []).length === 0) {
+    return { canStart: false, reason: "Waiting for Team B…" };
+  }
+  if (!teams.A?.leader) {
+    return { canStart: false, reason: "Waiting for Team A Leader…" };
+  }
+  if (!teams.B?.leader) {
+    return { canStart: false, reason: "Waiting for Team B Leader…" };
+  }
+  return { canStart: true, reason: "" };
+}
+
+$("btn-join-team-a").addEventListener("click", () => {
+  send({ type: "joinTeam", team: "A" });
+});
+
+$("btn-join-team-b").addEventListener("click", () => {
+  send({ type: "joinTeam", team: "B" });
+});
+
+$("btn-teams-start").addEventListener("click", () => {
+  send({ type: "startTeamGame" });
+});
+
+// =============================================================
 // Word Submission Screen
 // =============================================================
 function renderWords() {
@@ -290,7 +418,6 @@ function renderWords() {
   }
 }
 
-// Capture word in capture phase before send
 $("btn-ready").addEventListener("click", () => {
   const word = $("secret-word-input").value.trim().toUpperCase();
   if (word) state.mySecretWord = word;
@@ -323,12 +450,9 @@ function renderCountdown() {
       clearInterval(countdownInterval);
     } else {
       const el = $("countdown-number");
-      // Restart animation by cloning trick
       el.style.animation = "none";
       el.textContent = n;
-      requestAnimationFrame(() => {
-        el.style.animation = "";
-      });
+      requestAnimationFrame(() => { el.style.animation = ""; });
     }
   }, 1000);
 }
@@ -340,9 +464,30 @@ function renderPlaying() {
   clearInterval(countdownInterval);
   showScreen("playing");
   const room = state.room;
+  const isTeamMode = room.gameMode === "team";
   const isMyTurn = room.currentTurn === state.username;
 
-  // Turn banner with style based on whose turn it is
+  // Team status banner
+  const teamBanner = $("team-status-banner");
+  if (isTeamMode && room.teams) {
+    const activeTeam = room.teamTurn;
+    const activeLeader = room.teams[activeTeam]?.leader;
+    const teamColor = activeTeam === "A" ? "🟦" : "🟥";
+    const teamName = `Team ${activeTeam}`;
+    const leaderDeciding = isMyTurn
+      ? `👑 ${activeLeader} deciding…`
+      : `👑 ${activeLeader} deciding…`;
+    teamBanner.innerHTML = `
+      <span class="team-status-icon">${teamColor}</span>
+      <span class="team-status-text"><strong>${teamName} Turn</strong> · ${leaderDeciding}</span>
+    `;
+    teamBanner.className = `team-status-banner team-status-${activeTeam.toLowerCase()}`;
+    teamBanner.classList.remove("hidden");
+  } else {
+    teamBanner.classList.add("hidden");
+  }
+
+  // Turn banner
   const banner = $("turn-banner");
   const label  = $("turn-label");
   if (isMyTurn) {
@@ -354,30 +499,84 @@ function renderPlaying() {
   }
 
   const players = room.players;
-  const myIdx   = players.findIndex((p) => p.username === state.username);
-  const myTarget = players[(myIdx + 1) % players.length];
+  const myIdx = players.findIndex((p) => p.username === state.username);
 
-  // "Word to guess" — always my permanent target
+  // In team mode, target is an enemy player (server picks). For display, find any
+  // enemy player with unrevealed letters.
+  let myTarget;
+  if (isTeamMode && room.teams) {
+    const myTeam = ["A", "B"].find(t => room.teams[t].members.includes(state.username));
+    const enemyTeam = myTeam === "A" ? "B" : "A";
+    const enemyMembers = room.teams[enemyTeam]?.members || [];
+    myTarget = players.find(p => enemyMembers.includes(p.username) && p.revealedWord?.includes("_"))
+      || players.find(p => enemyMembers.includes(p.username));
+  } else {
+    myTarget = players[(myIdx + 1) % players.length];
+  }
+
   $("target-label").textContent = myTarget ? myTarget.username : "";
   renderHiddenWord(myTarget?.revealedWord || []);
 
-  // Wrong letters I've guessed against my target
   const wrongLetters = room.wrongLetters?.[myTarget?.username] || [];
   renderWrongLetters(wrongLetters);
 
-  // My own word, with opponent-found letters highlighted
   const me = players[myIdx];
   renderOwnWord(me?.revealedWord || []);
 
-  // Controls
-  if (isMyTurn) {
-    $("controls").classList.remove("hidden");
-    $("waiting-turn").classList.add("hidden");
-    $("letter-input").focus();
+  // Decide what controls to show
+  const controls     = $("controls");
+  const teammatePanel = $("teammate-panel");
+  const waitingTurn  = $("waiting-turn");
+
+  if (isTeamMode) {
+    const myTeam = ["A", "B"].find(t => room.teams[t].members.includes(state.username));
+    const isLeader = room.teams?.[myTeam]?.leader === state.username;
+    const isMyTeamTurn = room.teamTurn === myTeam;
+
+    if (isLeader && isMyTeamTurn) {
+      // Leader on their turn — show controls
+      controls.classList.remove("hidden");
+      teammatePanel.classList.add("hidden");
+      waitingTurn.classList.add("hidden");
+      $("letter-input").focus();
+    } else if (!isLeader) {
+      // Non-leader teammate — show suggestion panel
+      controls.classList.add("hidden");
+      waitingTurn.classList.add("hidden");
+      teammatePanel.classList.remove("hidden");
+      renderTeammatePanel(room, myTeam);
+    } else {
+      // Leader but other team's turn
+      controls.classList.add("hidden");
+      teammatePanel.classList.add("hidden");
+      waitingTurn.classList.remove("hidden");
+    }
   } else {
-    $("controls").classList.add("hidden");
-    $("waiting-turn").classList.remove("hidden");
+    if (isMyTurn) {
+      controls.classList.remove("hidden");
+      teammatePanel.classList.add("hidden");
+      waitingTurn.classList.add("hidden");
+      $("letter-input").focus();
+    } else {
+      controls.classList.add("hidden");
+      teammatePanel.classList.add("hidden");
+      waitingTurn.classList.remove("hidden");
+    }
   }
+}
+
+function renderTeammatePanel(room, myTeam) {
+  const leaderDisplay = $("teammate-leader-display");
+  const leader = room.teams?.[myTeam]?.leader;
+  const isMyTeamTurn = room.teamTurn === myTeam;
+  leaderDisplay.innerHTML = `
+    <div class="teammate-leader-name">
+      <span>👑 ${leader || "None"}</span>
+    </div>
+    <div class="teammate-leader-status ${isMyTeamTurn ? "active" : ""}">
+      ${isMyTeamTurn ? "Currently Playing…" : "Waiting for turn…"}
+    </div>
+  `;
 }
 
 function renderHiddenWord(revealedWord) {
@@ -415,11 +614,11 @@ function renderOwnWord(revealedWord) {
   container.innerHTML = "";
   if (!state.mySecretWord && (!revealedWord || revealedWord.length === 0)) return;
 
-  const word   = state.mySecretWord || "";
+  const word = state.mySecretWord || "";
   const length = word.length || (revealedWord ? revealedWord.length : 0);
 
   for (let i = 0; i < length; i++) {
-    const box   = document.createElement("div");
+    const box = document.createElement("div");
     const letter = word[i] || (revealedWord[i] !== "_" ? revealedWord[i] : "?");
     const opponentFound = revealedWord && revealedWord[i] && revealedWord[i] !== "_";
     box.className = "own-letter" + (opponentFound ? " opponent-found" : "");
@@ -454,6 +653,81 @@ $("guess-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("btn-guess").click();
 });
 
+// End Turn (Team Battle leaders)
+$("btn-end-turn").addEventListener("click", () => {
+  send({ type: "endTurn" });
+});
+
+// =============================================================
+// Teammate Suggestion Controls
+// =============================================================
+$("btn-suggest-letter").addEventListener("click", () => {
+  const val = $("suggest-letter-input").value.trim();
+  if (!val || !/^[A-Za-z]$/.test(val)) { toast("Enter a single letter", "error"); return; }
+  send({ type: "suggestAction", suggestionType: "letter", value: val.toUpperCase() });
+  $("suggest-letter-input").value = "";
+  toast("Suggestion sent!", "info", 1500);
+});
+
+$("suggest-letter-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("btn-suggest-letter").click();
+});
+
+$("btn-suggest-word").addEventListener("click", () => {
+  const val = $("suggest-word-input").value.trim();
+  if (!val) { toast("Enter a word to suggest", "error"); return; }
+  send({ type: "suggestAction", suggestionType: "word", value: val.toUpperCase() });
+  $("suggest-word-input").value = "";
+  toast("Suggestion sent!", "info", 1500);
+});
+
+$("suggest-word-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("btn-suggest-word").click();
+});
+
+// =============================================================
+// Suggestion Popup (shown to leader)
+// =============================================================
+function showSuggestionPopup(msg) {
+  state.pendingSuggestion = msg;
+  const popup = $("suggestion-popup");
+  const title = $("suggestion-popup-title");
+  const body  = $("suggestion-popup-body");
+
+  const typeLabel = msg.suggestionType === "letter" ? "Letter" : "Word";
+  title.textContent = `${msg.from} suggested a ${typeLabel}`;
+  body.innerHTML = `
+    <div class="suggestion-value">${msg.value}</div>
+  `;
+
+  popup.classList.remove("hidden");
+  popup.classList.add("show");
+}
+
+$("btn-accept-suggestion").addEventListener("click", () => {
+  const s = state.pendingSuggestion;
+  if (!s) return;
+  if (s.suggestionType === "letter") {
+    $("letter-input").value = s.value;
+    $("letter-input").focus();
+  } else {
+    $("guess-input").value = s.value;
+    $("guess-input").focus();
+  }
+  hideSuggestionPopup();
+});
+
+$("btn-ignore-suggestion").addEventListener("click", () => {
+  hideSuggestionPopup();
+});
+
+function hideSuggestionPopup() {
+  const popup = $("suggestion-popup");
+  popup.classList.remove("show");
+  setTimeout(() => popup.classList.add("hidden"), 200);
+  state.pendingSuggestion = null;
+}
+
 // =============================================================
 // Letter Result
 // =============================================================
@@ -472,12 +746,34 @@ function renderEnded() {
   clearInterval(countdownInterval);
   showScreen("ended");
   const room = state.room;
+  const isTeamMode = room.gameMode === "team";
 
-  // Winner banner
-  const isWinner = room.winner === state.username;
-  $("winner-name").textContent = isWinner
-    ? "🎉 You Won!"
-    : `${room.winner} Wins!`;
+  if (isTeamMode && room.winnerTeam) {
+    const winTeam = room.winnerTeam;
+    const teamMembers = room.teams?.[winTeam]?.members || [];
+    const isMyTeam = teamMembers.includes(state.username);
+
+    $("winner-name").textContent = isMyTeam
+      ? `🎉 Team ${winTeam} Wins!`
+      : `🏆 Team ${winTeam} Wins!`;
+
+    // Show team members
+    const memberEl = $("winner-team-members");
+    memberEl.innerHTML = "";
+    const leader = room.teams?.[winTeam]?.leader;
+    teamMembers.forEach(member => {
+      const isLeader = member === leader;
+      const div = document.createElement("div");
+      div.className = "winner-member";
+      div.innerHTML = `${isLeader ? "👑" : "👤"} ${member}`;
+      memberEl.appendChild(div);
+    });
+    memberEl.classList.remove("hidden");
+  } else {
+    const isWinner = room.winner === state.username;
+    $("winner-name").textContent = isWinner ? "🎉 You Won!" : `${room.winner} Wins!`;
+    $("winner-team-members").classList.add("hidden");
+  }
 
   // Reveal every player's secret word
   const list = $("secret-words-list");
@@ -485,25 +781,34 @@ function renderEnded() {
 
   room.players.forEach((p, idx) => {
     const row = document.createElement("div");
-    const isThisWinner = p.username === room.winner;
-    row.className = "secret-word-row" + (isThisWinner ? " is-winner" : "");
+    const isWinner = isTeamMode
+      ? (room.teams?.[room.winnerTeam]?.members || []).includes(p.username)
+      : p.username === room.winner;
+    row.className = "secret-word-row" + (isWinner ? " is-winner" : "");
     row.style.animationDelay = `${idx * 0.08}s`;
 
-    // The server now sends p.word for every player when phase === "ended".
-    // Fallback to state.mySecretWord for our own word (covers edge cases).
-    const word =
-      p.word ||
-      (p.username === state.username ? state.mySecretWord : null) ||
-      "?".repeat(room.wordLength || 5);
+    const word = p.word
+      || (p.username === state.username ? state.mySecretWord : null)
+      || "?".repeat(room.wordLength || 5);
     const initials = p.username.slice(0, 2).toUpperCase();
 
+    // In team mode, show team tag
+    let teamTag = "";
+    if (isTeamMode && room.teams) {
+      const playerTeam = ["A", "B"].find(t => room.teams[t].members.includes(p.username));
+      if (playerTeam) {
+        teamTag = `<span class="badge badge-team-${playerTeam.toLowerCase()}">${playerTeam === "A" ? "🟦 A" : "🟥 B"}</span>`;
+      }
+    }
+
     row.innerHTML = `
-      <div class="sw-avatar">${isThisWinner ? "🏆" : initials}</div>
+      <div class="sw-avatar">${isWinner ? "🏆" : initials}</div>
       <div class="sw-info">
         <div class="sw-username">
           ${p.username}
-          ${isThisWinner ? `<span class="crown">👑</span>` : ""}
+          ${isWinner ? `<span class="crown">👑</span>` : ""}
           ${p.username === state.username ? `<span class="badge badge-you">You</span>` : ""}
+          ${teamTag}
         </div>
         <div class="sw-word">${word}</div>
       </div>

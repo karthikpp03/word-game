@@ -873,3 +873,419 @@ input::placeholder { color: #9ca3af; }
 @media (min-width: 640px) {
   .card { padding: 2.25rem 2.5rem; }
 }
+/* ============================================================
+   Team Battle – New Styles
+   All values use existing CSS variables to match the design
+   ============================================================ */
+
+/* ── Game Mode Selector (Home) ──────────────────────────── */
+.mode-selector {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.mode-option {
+  flex: 1;
+  cursor: pointer;
+}
+
+.mode-option input[type="radio"] {
+  display: none;
+}
+
+.mode-option-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.75rem 0.5rem;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  transition: all var(--transition);
+  text-align: center;
+}
+
+.mode-option input:checked + .mode-option-box {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79,70,229,0.1);
+}
+
+.mode-option-icon { font-size: 1.3rem; }
+.mode-option-label { font-size: 0.8rem; font-weight: 700; }
+
+/* ── Lobby mode badge ───────────────────────────────────── */
+.lobby-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.85rem;
+  background: var(--warning-light);
+  color: #92400e;
+  border: 1.5px solid rgba(217,119,6,0.2);
+  border-radius: 99px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+/* ── Team Selection Screen ──────────────────────────────── */
+.team-selection-card {
+  max-width: 640px;
+}
+
+.teams-title {
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.teams-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 1.25rem 0;
+}
+
+@media (max-width: 520px) {
+  .teams-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.team-card {
+  border-radius: var(--radius);
+  padding: 1.1rem;
+  border: 2px solid transparent;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.team-card.team-a {
+  border-color: rgba(79,70,229,0.25);
+  background: linear-gradient(to bottom, rgba(79,70,229,0.04), var(--bg));
+}
+
+.team-card.team-b {
+  border-color: rgba(220,38,38,0.25);
+  background: linear-gradient(to bottom, rgba(220,38,38,0.04), var(--bg));
+}
+
+.team-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.team-emoji { font-size: 1.2rem; }
+.team-name  { font-size: 1rem; }
+
+.team-section-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.team-player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 2.5rem;
+  flex: 1;
+}
+
+.team-player-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--white);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  animation: fadeIn 0.15s ease;
+}
+
+.team-player-avatar { font-size: 1rem; flex-shrink: 0; }
+
+.team-player-name { flex: 1; font-weight: 600; color: var(--text-secondary); font-size: 0.88rem; }
+.team-player-name.is-leader { color: var(--primary); }
+
+.team-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-style: italic;
+  padding: 0.4rem 0.2rem;
+}
+
+.team-leader-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--warning-light);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(217,119,6,0.15);
+}
+
+.team-leader-label { color: #92400e; font-weight: 600; }
+.team-leader-name  { color: #92400e; font-weight: 800; }
+
+/* Team join buttons */
+.btn-team-a {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(79,70,229,0.2);
+}
+.btn-team-a:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.btn-team-a.active-team {
+  background: var(--success);
+  box-shadow: 0 2px 6px rgba(22,163,74,0.2);
+}
+
+.btn-team-b {
+  background: var(--danger);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(220,38,38,0.2);
+}
+.btn-team-b:hover:not(:disabled) {
+  background: #b91c1c;
+}
+.btn-team-b.active-team {
+  background: var(--success);
+  box-shadow: 0 2px 6px rgba(22,163,74,0.2);
+}
+
+/* Set leader button */
+.btn-set-leader {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 99px;
+  background: var(--primary-light);
+  color: var(--primary);
+  border: 1.5px solid rgba(79,70,229,0.2);
+  cursor: pointer;
+  font-weight: 700;
+  transition: all var(--transition);
+  font-family: var(--font);
+  flex-shrink: 0;
+}
+.btn-set-leader:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn-xs { font-size: 0.7rem; padding: 0.15rem 0.45rem; }
+
+/* Host start controls area */
+.teams-host-controls {
+  border-top: 1.5px solid var(--border);
+  padding-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.teams-start-reason {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--warning);
+  font-weight: 600;
+  padding: 0.25rem 0;
+}
+
+/* ── Team Status Banner (Playing screen) ──────────────────── */
+.team-status-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: 1.5px solid transparent;
+  animation: fadeIn 0.2s ease;
+}
+
+.team-status-a {
+  background: var(--primary-light);
+  border-color: rgba(79,70,229,0.2);
+  color: #3730a3;
+}
+
+.team-status-b {
+  background: var(--danger-light);
+  border-color: rgba(220,38,38,0.18);
+  color: #991b1b;
+}
+
+.team-status-icon { font-size: 1.1rem; }
+.team-status-text { flex: 1; }
+
+/* ── Teammate Panel (non-leader view) ─────────────────────── */
+.teammate-panel {
+  border-top: 1.5px solid var(--border);
+  padding-top: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.teammate-leader-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.teammate-leader-display {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--warning-light);
+  border-radius: var(--radius-sm);
+  border: 1.5px solid rgba(217,119,6,0.18);
+}
+
+.teammate-leader-name {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #92400e;
+  flex: 1;
+}
+
+.teammate-leader-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0.2rem 0.6rem;
+  border-radius: 99px;
+  background: var(--border);
+}
+
+.teammate-leader-status.active {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.teammate-suggest-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ── Suggestion Popup ─────────────────────────────────────── */
+.suggestion-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 1.5rem;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.suggestion-popup.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: all;
+}
+
+.suggestion-popup-inner {
+  background: var(--white);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 1.25rem 1.5rem;
+  width: 100%;
+  max-width: 380px;
+  border: 1.5px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  animation: suggestionSlide 0.28s cubic-bezier(0.34, 1.3, 0.64, 1) both;
+}
+
+@keyframes suggestionSlide {
+  from { transform: translateY(20px) scale(0.96); opacity: 0; }
+  to   { transform: translateY(0) scale(1);       opacity: 1; }
+}
+
+.suggestion-popup-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.suggestion-popup-icon { font-size: 1.1rem; }
+
+.suggestion-popup-body {
+  text-align: center;
+}
+
+.suggestion-value {
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: 6px;
+  color: var(--primary);
+  text-transform: uppercase;
+  padding: 0.5rem 0;
+}
+
+.suggestion-popup-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.suggestion-popup-actions .btn { flex: 1; }
+
+/* ── Winner screen – team members list ───────────────────── */
+.winner-team-members {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.winner-member {
+  background: rgba(255,255,255,0.2);
+  border-radius: 99px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* ── Team badges in end screen ───────────────────────────── */
+.badge-team-a {
+  background: var(--primary-light);
+  color: #3730a3;
+}
+
+.badge-team-b {
+  background: var(--danger-light);
+  color: #991b1b;
+}

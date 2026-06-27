@@ -11,6 +11,21 @@
   <!-- ── Toast notification ── -->
   <div id="toast" class="toast" role="alert" aria-live="polite"></div>
 
+  <!-- ── Suggestion popup (Team Battle) ── -->
+  <div id="suggestion-popup" class="suggestion-popup hidden">
+    <div class="suggestion-popup-inner">
+      <div class="suggestion-popup-header">
+        <span class="suggestion-popup-icon">💡</span>
+        <span id="suggestion-popup-title"></span>
+      </div>
+      <div id="suggestion-popup-body" class="suggestion-popup-body"></div>
+      <div class="suggestion-popup-actions">
+        <button id="btn-accept-suggestion" class="btn btn-primary">Accept</button>
+        <button id="btn-ignore-suggestion" class="btn btn-secondary">Ignore</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══════════════════════════════════════════
        SCREEN: Home
   ══════════════════════════════════════════ -->
@@ -58,6 +73,25 @@
             <option value="10">10 letters</option>
           </select>
         </div>
+        <div class="field">
+          <label>Game Mode</label>
+          <div class="mode-selector">
+            <label class="mode-option">
+              <input type="radio" name="game-mode" value="classic" checked />
+              <span class="mode-option-box">
+                <span class="mode-option-icon">🎮</span>
+                <span class="mode-option-label">Classic</span>
+              </span>
+            </label>
+            <label class="mode-option">
+              <input type="radio" name="game-mode" value="team" />
+              <span class="mode-option-box">
+                <span class="mode-option-icon">⚔️</span>
+                <span class="mode-option-label">Team Battle</span>
+              </span>
+            </label>
+          </div>
+        </div>
         <button id="btn-create-confirm" class="btn btn-primary btn-full">Create &amp; Enter Lobby</button>
       </div>
     </div>
@@ -83,6 +117,8 @@
 
       <p class="hint">Share the code with your friends to invite them.</p>
 
+      <div id="lobby-mode-badge" class="lobby-mode-badge hidden"></div>
+
       <div class="section-label">Players</div>
       <div id="lobby-players" class="player-list"></div>
 
@@ -90,6 +126,55 @@
         <button id="btn-start" class="btn btn-primary btn-full hidden">Start Game</button>
         <p id="lobby-waiting" class="status-msg">Waiting for host to start…</p>
       </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       SCREEN: Team Selection (Team Battle only)
+  ══════════════════════════════════════════ -->
+  <div id="screen-teams" class="screen">
+    <div class="card team-selection-card">
+      <h2 class="teams-title">⚔️ Choose Your Team</h2>
+      <p class="hint">Join a team and select a leader before the game can start.</p>
+
+      <div class="teams-grid">
+        <!-- Team A -->
+        <div class="team-card team-a">
+          <div class="team-card-header">
+            <span class="team-emoji">🟦</span>
+            <span class="team-name">Team A</span>
+          </div>
+          <div class="team-section-label">Players</div>
+          <div id="team-a-players" class="team-player-list"></div>
+          <div id="team-a-leader-row" class="team-leader-row hidden">
+            <span class="team-leader-label">👑 Leader:</span>
+            <span id="team-a-leader-name" class="team-leader-name"></span>
+          </div>
+          <button id="btn-join-team-a" class="btn btn-team-a btn-full">Join Team A</button>
+        </div>
+
+        <!-- Team B -->
+        <div class="team-card team-b">
+          <div class="team-card-header">
+            <span class="team-emoji">🟥</span>
+            <span class="team-name">Team B</span>
+          </div>
+          <div class="team-section-label">Players</div>
+          <div id="team-b-players" class="team-player-list"></div>
+          <div id="team-b-leader-row" class="team-leader-row hidden">
+            <span class="team-leader-label">👑 Leader:</span>
+            <span id="team-b-leader-name" class="team-leader-name"></span>
+          </div>
+          <button id="btn-join-team-b" class="btn btn-team-b btn-full">Join Team B</button>
+        </div>
+      </div>
+
+      <!-- Host start control -->
+      <div id="teams-host-controls" class="teams-host-controls hidden">
+        <p id="teams-start-reason" class="teams-start-reason"></p>
+        <button id="btn-teams-start" class="btn btn-primary btn-full" disabled>Start Game</button>
+      </div>
+      <p id="teams-waiting-msg" class="status-msg hidden">Waiting for host to start the game…</p>
     </div>
   </div>
 
@@ -132,6 +217,9 @@
   <div id="screen-playing" class="screen">
     <div class="card game-card">
 
+      <!-- Team status banner (Team Battle only) -->
+      <div id="team-status-banner" class="team-status-banner hidden"></div>
+
       <!-- Turn banner -->
       <div id="turn-banner" class="turn-banner">
         <span id="turn-label"></span>
@@ -157,7 +245,7 @@
         <div id="own-word" class="own-word"></div>
       </div>
 
-      <!-- Controls (only active on your turn) -->
+      <!-- Controls (leader / classic: active on turn) -->
       <div id="controls" class="controls hidden">
         <div class="control-row">
           <input id="letter-input" type="text" maxlength="1" placeholder="A"
@@ -173,6 +261,34 @@
                  autocapitalize="characters"
                  aria-label="Guess the full word" />
           <button id="btn-guess" class="btn btn-guess">Guess Word</button>
+        </div>
+        <div class="control-divider"><span>or</span></div>
+        <div class="control-row">
+          <button id="btn-end-turn" class="btn btn-secondary btn-full">End Turn</button>
+        </div>
+      </div>
+
+      <!-- Teammate suggestion panel (Team Battle non-leaders) -->
+      <div id="teammate-panel" class="teammate-panel hidden">
+        <div class="teammate-leader-info">
+          <span class="section-label">Team Leader</span>
+          <div id="teammate-leader-display" class="teammate-leader-display"></div>
+        </div>
+        <div class="teammate-suggest-section">
+          <div class="control-row">
+            <input id="suggest-letter-input" type="text" maxlength="1" placeholder="A"
+                   autocomplete="off" autocorrect="off" spellcheck="false"
+                   autocapitalize="characters" class="letter-input"
+                   aria-label="Suggest a letter" />
+            <button id="btn-suggest-letter" class="btn btn-secondary">Suggest Letter</button>
+          </div>
+          <div class="control-divider"><span>or</span></div>
+          <div class="control-row">
+            <input id="suggest-word-input" type="text" placeholder="Suggest a word"
+                   autocomplete="off" autocorrect="off" spellcheck="false"
+                   autocapitalize="characters" />
+            <button id="btn-suggest-word" class="btn btn-secondary">Suggest Word</button>
+          </div>
         </div>
       </div>
 
@@ -195,6 +311,8 @@
       <div class="winner-banner">
         <div class="winner-trophy" aria-hidden="true">🏆</div>
         <h2 id="winner-name" class="winner-title"></h2>
+        <!-- Team winner members (Team Battle) -->
+        <div id="winner-team-members" class="winner-team-members hidden"></div>
       </div>
 
       <!-- All secret words revealed -->
