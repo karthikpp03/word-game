@@ -489,14 +489,12 @@ function renderEnded() {
     row.className = "secret-word-row" + (isThisWinner ? " is-winner" : "");
     row.style.animationDelay = `${idx * 0.08}s`;
 
-    // The server exposes each player's actual word in room.playerWords (keyed by username)
-    // Fallback: if it's our own word, use state.mySecretWord
+    // The server now sends p.word for every player when phase === "ended".
+    // Fallback to state.mySecretWord for our own word (covers edge cases).
     const word =
-      (room.playerWords && room.playerWords[p.username]) ||
-      (p.username === state.username ? state.mySecretWord : null) ||
       p.word ||
-      "?????";
-
+      (p.username === state.username ? state.mySecretWord : null) ||
+      "?".repeat(room.wordLength || 5);
     const initials = p.username.slice(0, 2).toUpperCase();
 
     row.innerHTML = `

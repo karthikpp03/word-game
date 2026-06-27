@@ -629,6 +629,9 @@ function sanitizeRoom(room) {
       // safe to send to everyone.
       revealedWord: p.revealedWord,
       hasWord: !!p.secretWord,
+      // Reveal the actual secret word to all players once the game ends.
+      // During play this is always null so opponents can never see it.
+      word: room.phase === "ended" ? (p.secretWord || null) : null,
     })),
   };
 }
