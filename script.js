@@ -2,8 +2,6 @@
 // WordGuess – Frontend Client
 // =============================================================
 
-// ── Config ──────────────────────────────────────────────────
-// Replace with your deployed Worker URL after deploying
 const WORKER_URL = "https://word-game.zeus-karthik11.workers.dev";
 
 // =============================================================
@@ -12,8 +10,9 @@ const WORKER_URL = "https://word-game.zeus-karthik11.workers.dev";
 const state = {
   username: "",
   roomCode: "",
-  room: null,         // Latest room state from server
-  ws: null,           // Active WebSocket connection
+  room: null,
+  ws: null,
+  mySecretWord: null,
   countdownTimer: null,
 };
 
@@ -34,9 +33,7 @@ function toast(message, type = "", duration = 3000) {
   el.textContent = message;
   el.className = `toast show ${type}`;
   clearTimeout(toastTimeout);
-  toastTimeout = setTimeout(() => {
-    el.classList.remove("show");
-  }, duration);
+  toastTimeout = setTimeout(() => el.classList.remove("show"), duration);
 }
 
 // =============================================================
@@ -50,7 +47,6 @@ const $ = (id) => document.getElementById(id);
 $("btn-create").addEventListener("click", () => {
   const username = $("home-username").value.trim();
   if (!username) { toast("Enter a username", "error"); return; }
-  // Show create form (word length picker)
   $("join-form").classList.add("hidden");
   $("create-form").classList.toggle("hidden");
 });
@@ -58,7 +54,6 @@ $("btn-create").addEventListener("click", () => {
 $("btn-join-show").addEventListener("click", () => {
   const username = $("home-username").value.trim();
   if (!username) { toast("Enter a username", "error"); return; }
-  // Show join form
   $("create-form").classList.add("hidden");
   $("join-form").classList.toggle("hidden");
 });
@@ -66,8 +61,11 @@ $("btn-join-show").addEventListener("click", () => {
 $("btn-create-confirm").addEventListener("click", async () => {
   const username = $("home-username").value.trim();
   const wordLength = parseInt($("word-length").value);
-
   if (!username) { toast("Enter a username", "error"); return; }
+
+  const btn = $("btn-create-confirm");
+  btn.disabled = true;
+  btn.textContent = "Creating…";
 
   try {
     const res = await fetch(`${WORKER_URL}/create`, {
@@ -75,39 +73,32 @@ $("btn-create-confirm").addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, wordLength }),
     });
-
     const data = await res.json();
-
-    if (!res.ok) {
-      toast(data.error || "Failed to create room", "error");
-      return;
-    }
-
+    if (!res.ok) { toast(data.error || "Failed to create room", "error"); return; }
     state.username = username;
     state.roomCode = data.roomCode;
     connectWebSocket();
   } catch (err) {
     toast("Could not reach server. Check WORKER_URL in script.js.", "error");
     console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Create & Enter Lobby";
   }
 });
 
 $("btn-join").addEventListener("click", () => {
   const username = $("home-username").value.trim();
   const code = $("join-code").value.trim();
-
   if (!username) { toast("Enter a username", "error"); return; }
   if (!code || code.length !== 6 || !/^\d{6}$/.test(code)) {
-    toast("Enter a valid 6-digit room code", "error");
-    return;
+    toast("Enter a valid 6-digit room code", "error"); return;
   }
-
   state.username = username;
   state.roomCode = code;
   connectWebSocket();
 });
 
-// Allow Enter key on join code input
 $("join-code").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("btn-join").click();
 });
@@ -116,19 +107,15 @@ $("join-code").addEventListener("keydown", (e) => {
 // WebSocket Connection
 // =============================================================
 function connectWebSocket() {
-  if (state.ws) {
-    state.ws.close();
-    state.ws = null;
+  if (state.ws) { state.ws.close(); state.ws = null; }
+
+  let clientId = localStorage.getItem("clientId");
+  if (!clientId) {
+    clientId = crypto.randomUUID();
+    localStorage.setItem("clientId", clientId);
   }
 
-    let clientId = localStorage.getItem("clientId");
-
-    if (!clientId) {
-        clientId = crypto.randomUUID();
-        localStorage.setItem("clientId", clientId);
-    }
-
-    const wsUrl =
+  const wsUrl =
     WORKER_URL.replace(/^https?/, "wss") +
     `/room/${state.roomCode}?username=${encodeURIComponent(state.username)}&id=${encodeURIComponent(clientId)}`;
 
@@ -146,11 +133,9 @@ function connectWebSocket() {
   });
 
   ws.addEventListener("close", () => {
-    // Attempt reconnect after 2s if game is still in progress
     if (state.roomCode) {
-      setTimeout(() => {
-        if (state.roomCode) connectWebSocket();
-      }, 2000);
+      toast("Connection lost. Reconnecting…", "error");
+      setTimeout(() => { if (state.roomCode) connectWebSocket(); }, 2000);
     }
   });
 
@@ -166,7 +151,6 @@ function handleMessage(msg) {
   switch (msg.type) {
     case "joined":
       state.room = msg.room;
-      // Restore own secret word from server (handles reconnects too)
       if (msg.yourWord) state.mySecretWord = msg.yourWord;
       renderCurrentPhase();
       break;
@@ -181,7 +165,7 @@ function handleMessage(msg) {
       break;
 
     case "wrongGuess":
-      toast(`${msg.guesser} guessed "${msg.guess}" – Wrong!`, "error");
+      toast(`❌  "${msg.guess}" is wrong — ${msg.guesser} keeps trying!`, "error");
       break;
 
     case "error":
@@ -196,23 +180,12 @@ function handleMessage(msg) {
 function renderCurrentPhase() {
   const room = state.room;
   if (!room) return;
-
   switch (room.phase) {
-    case "lobby":
-      renderLobby();
-      break;
-    case "words":
-      renderWords();
-      break;
-    case "countdown":
-      renderCountdown();
-      break;
-    case "playing":
-      renderPlaying();
-      break;
-    case "ended":
-      renderEnded();
-      break;
+    case "lobby":     renderLobby();     break;
+    case "words":     renderWords();     break;
+    case "countdown": renderCountdown(); break;
+    case "playing":   renderPlaying();   break;
+    case "ended":     renderEnded();     break;
   }
 }
 
@@ -225,21 +198,21 @@ function renderLobby() {
 
   $("lobby-code").textContent = room.code;
 
-  // Build player list
   const list = $("lobby-players");
   list.innerHTML = "";
   room.players.forEach((p) => {
     const div = document.createElement("div");
     div.className = "player-item";
+    const initials = p.username.slice(0, 2).toUpperCase();
     div.innerHTML = `
-      <span>${p.username}</span>
+      <div class="player-avatar">${initials}</div>
+      <span class="player-name">${p.username}</span>
       ${p.isHost ? `<span class="badge badge-host">Host</span>` : ""}
       ${p.username === state.username ? `<span class="badge badge-you">You</span>` : ""}
     `;
     list.appendChild(div);
   });
 
-  // Show / hide Start button
   const isHost = room.host === state.username;
   const canStart = room.players.length >= 2;
   const startBtn = $("btn-start");
@@ -249,16 +222,29 @@ function renderLobby() {
     startBtn.classList.remove("hidden");
     waitingMsg.classList.add("hidden");
     startBtn.disabled = !canStart;
-    startBtn.title = canStart ? "" : "Need at least 2 players";
+    startBtn.textContent = canStart
+      ? "Start Game"
+      : `Waiting for players… (${room.players.length}/2)`;
   } else {
     startBtn.classList.add("hidden");
     waitingMsg.classList.remove("hidden");
+    waitingMsg.textContent = `Waiting for host to start… (${room.players.length} player${room.players.length !== 1 ? "s" : ""})`;
   }
 }
 
 $("btn-copy-code").addEventListener("click", () => {
   const code = $("lobby-code").textContent;
-  navigator.clipboard.writeText(code).then(() => toast("Room code copied!", "success"));
+  navigator.clipboard.writeText(code).then(() => {
+    const btn = $("btn-copy-code");
+    btn.classList.add("copied");
+    btn.querySelector(".copy-text").textContent = "Copied!";
+    btn.querySelector(".copy-icon").textContent = "✓";
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.querySelector(".copy-text").textContent = "Copy";
+      btn.querySelector(".copy-icon").textContent = "📋";
+    }, 2000);
+  });
 });
 
 $("btn-start").addEventListener("click", () => {
@@ -273,25 +259,25 @@ function renderWords() {
   const room = state.room;
 
   $("word-length-hint").textContent =
-    `Enter a secret word that is exactly ${room.wordLength} letters long. Only you will see it.`;
+    `Choose a secret word that is exactly ${room.wordLength} letters long. Your opponent must guess it.`;
 
-  // Show player ready status
   const list = $("words-player-list");
   list.innerHTML = "";
   room.players.forEach((p) => {
     const div = document.createElement("div");
     div.className = "player-item";
+    const initials = p.username.slice(0, 2).toUpperCase();
     div.innerHTML = `
-      <span>${p.username}</span>
+      <div class="player-avatar">${initials}</div>
+      <span class="player-name">${p.username}</span>
       ${p.username === state.username ? `<span class="badge badge-you">You</span>` : ""}
       <span class="badge ${p.ready ? "badge-ready" : "badge-waiting"}">
-        ${p.ready ? "Ready" : "Waiting"}
+        ${p.ready ? "Ready ✓" : "Choosing…"}
       </span>
     `;
     list.appendChild(div);
   });
 
-  // Find myself
   const me = room.players.find((p) => p.username === state.username);
   if (me && me.ready) {
     $("secret-word-input").disabled = true;
@@ -300,9 +286,15 @@ function renderWords() {
   } else {
     $("secret-word-input").disabled = false;
     $("btn-ready").disabled = false;
-    $("btn-ready").textContent = "Ready";
+    $("btn-ready").textContent = "I'm Ready";
   }
 }
+
+// Capture word in capture phase before send
+$("btn-ready").addEventListener("click", () => {
+  const word = $("secret-word-input").value.trim().toUpperCase();
+  if (word) state.mySecretWord = word;
+}, true);
 
 $("btn-ready").addEventListener("click", () => {
   const word = $("secret-word-input").value.trim();
@@ -330,7 +322,13 @@ function renderCountdown() {
     if (n <= 0) {
       clearInterval(countdownInterval);
     } else {
-      $("countdown-number").textContent = n;
+      const el = $("countdown-number");
+      // Restart animation by cloning trick
+      el.style.animation = "none";
+      el.textContent = n;
+      requestAnimationFrame(() => {
+        el.style.animation = "";
+      });
     }
   }, 1000);
 }
@@ -344,33 +342,34 @@ function renderPlaying() {
   const room = state.room;
   const isMyTurn = room.currentTurn === state.username;
 
-  // Turn banner
-  $("turn-label").textContent = isMyTurn
-    ? "Your turn!"
-    : `${room.currentTurn}'s turn`;
+  // Turn banner with style based on whose turn it is
+  const banner = $("turn-banner");
+  const label  = $("turn-label");
+  if (isMyTurn) {
+    banner.className = "turn-banner my-turn";
+    label.textContent = "✦ Your turn — make a move!";
+  } else {
+    banner.className = "turn-banner their-turn";
+    label.textContent = `${room.currentTurn} is thinking…`;
+  }
 
   const players = room.players;
-  const myIdx = players.findIndex((p) => p.username === state.username);
-
-  // Each player always guesses the word of the player immediately after them.
-  // This never changes — it is always MY permanent target, not whoever is
-  // currently guessing's target.
+  const myIdx   = players.findIndex((p) => p.username === state.username);
   const myTarget = players[(myIdx + 1) % players.length];
 
-  // "Word to guess" panel: always shows MY target's revealed word (partially hidden)
-  $("target-label").textContent = myTarget ? `(${myTarget.username}'s word)` : "";
+  // "Word to guess" — always my permanent target
+  $("target-label").textContent = myTarget ? myTarget.username : "";
   renderHiddenWord(myTarget?.revealedWord || []);
 
-  // Wrong letters: letters I have personally guessed wrong against my target
+  // Wrong letters I've guessed against my target
   const wrongLetters = room.wrongLetters?.[myTarget?.username] || [];
   renderWrongLetters(wrongLetters);
 
-  // My own word: show my actual secret word with green highlights for letters
-  // the opponent has already found (tracked via revealedWord on the server)
+  // My own word, with opponent-found letters highlighted
   const me = players[myIdx];
   renderOwnWord(me?.revealedWord || []);
 
-  // Show controls only on my turn
+  // Controls
   if (isMyTurn) {
     $("controls").classList.remove("hidden");
     $("waiting-turn").classList.add("hidden");
@@ -399,6 +398,10 @@ function renderHiddenWord(revealedWord) {
 function renderWrongLetters(letters) {
   const container = $("wrong-letters");
   container.innerHTML = "";
+  if (!letters || letters.length === 0) {
+    container.innerHTML = `<span class="no-wrong">None yet</span>`;
+    return;
+  }
   letters.forEach((l) => {
     const chip = document.createElement("span");
     chip.className = "wrong-chip";
@@ -412,35 +415,24 @@ function renderOwnWord(revealedWord) {
   container.innerHTML = "";
   if (!state.mySecretWord && (!revealedWord || revealedWord.length === 0)) return;
 
-  // Use the server-tracked revealedWord to know which positions the
-  // opponent has already guessed correctly (those are highlighted green).
-  // Always display the full actual word (from state.mySecretWord).
-  const word = state.mySecretWord || "";
+  const word   = state.mySecretWord || "";
   const length = word.length || (revealedWord ? revealedWord.length : 0);
 
   for (let i = 0; i < length; i++) {
-    const box = document.createElement("div");
+    const box   = document.createElement("div");
     const letter = word[i] || (revealedWord[i] !== "_" ? revealedWord[i] : "?");
     const opponentFound = revealedWord && revealedWord[i] && revealedWord[i] !== "_";
-    // "opponent-found" = this letter has been discovered by the player guessing my word
     box.className = "own-letter" + (opponentFound ? " opponent-found" : "");
     box.textContent = letter;
     container.appendChild(box);
   }
 }
 
-// Track own word locally to always display it
-$("btn-ready").addEventListener("click", () => {
-  // Capture word before sending
-  const word = $("secret-word-input").value.trim().toUpperCase();
-  if (word) state.mySecretWord = word;
-}, true); // capture phase so it runs before the other listener
-
 // Ask Letter
 $("btn-ask").addEventListener("click", () => {
   const letter = $("letter-input").value.trim();
   if (!letter) { toast("Enter a letter", "error"); return; }
-  if (!/^[A-Za-z]$/.test(letter)) { toast("Only single letters allowed", "error"); return; }
+  if (!/^[A-Za-z]$/.test(letter)) { toast("Single letters only", "error"); return; }
   send({ type: "askLetter", letter });
   $("letter-input").value = "";
   $("letter-input").focus();
@@ -467,9 +459,9 @@ $("guess-input").addEventListener("keydown", (e) => {
 // =============================================================
 function handleLetterResult(msg) {
   if (msg.found) {
-    toast(`"${msg.letter}" found in ${msg.target}'s word!`, "success");
+    toast(`✓  "${msg.letter.toUpperCase()}" found in ${msg.target}'s word!`, "success");
   } else {
-    toast(`"${msg.letter}" not in ${msg.target}'s word.`, "error");
+    toast(`✗  "${msg.letter.toUpperCase()}" is not in ${msg.target}'s word.`, "error");
   }
 }
 
@@ -481,11 +473,45 @@ function renderEnded() {
   showScreen("ended");
   const room = state.room;
 
-  $("winner-name").textContent = room.winner === state.username
-    ? "You won! 🎉"
-    : `${room.winner} won!`;
+  // Winner banner
+  const isWinner = room.winner === state.username;
+  $("winner-name").textContent = isWinner
+    ? "🎉 You Won!"
+    : `${room.winner} Wins!`;
 
-  $("winner-word").textContent = room.winnerWord || "";
+  // Reveal every player's secret word
+  const list = $("secret-words-list");
+  list.innerHTML = "";
+
+  room.players.forEach((p, idx) => {
+    const row = document.createElement("div");
+    const isThisWinner = p.username === room.winner;
+    row.className = "secret-word-row" + (isThisWinner ? " is-winner" : "");
+    row.style.animationDelay = `${idx * 0.08}s`;
+
+    // The server exposes each player's actual word in room.playerWords (keyed by username)
+    // Fallback: if it's our own word, use state.mySecretWord
+    const word =
+      (room.playerWords && room.playerWords[p.username]) ||
+      (p.username === state.username ? state.mySecretWord : null) ||
+      p.word ||
+      "?????";
+
+    const initials = p.username.slice(0, 2).toUpperCase();
+
+    row.innerHTML = `
+      <div class="sw-avatar">${isThisWinner ? "🏆" : initials}</div>
+      <div class="sw-info">
+        <div class="sw-username">
+          ${p.username}
+          ${isThisWinner ? `<span class="crown">👑</span>` : ""}
+          ${p.username === state.username ? `<span class="badge badge-you">You</span>` : ""}
+        </div>
+        <div class="sw-word">${word}</div>
+      </div>
+    `;
+    list.appendChild(row);
+  });
 
   const isHost = room.host === state.username;
   $("btn-play-again").classList.toggle("hidden", !isHost);
