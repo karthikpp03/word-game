@@ -186,12 +186,35 @@
       <h2>Your Secret Word</h2>
       <p id="word-length-hint" class="hint"></p>
 
-      <div class="field">
+      <!-- Team Battle: leader role badge + Team Chat toggle -->
+      <div id="team-word-header" class="team-word-header hidden">
+        <span id="team-word-role-badge" class="badge badge-leader-role"></span>
+        <button id="btn-team-chat-toggle" class="btn btn-secondary btn-chat-toggle">💬 Team Chat</button>
+      </div>
+
+      <!-- Team Chat panel (Team Battle only, locked once the word is submitted) -->
+      <div id="team-chat-panel" class="team-chat-panel hidden">
+        <div class="team-chat-header">
+          <span>💬 Team Chat <span class="muted-label">(discuss your secret word)</span></span>
+          <button id="btn-team-chat-close" class="btn-chat-close" aria-label="Close chat">✕</button>
+        </div>
+        <div id="team-chat-messages" class="team-chat-messages"></div>
+        <div id="team-chat-locked-msg" class="team-chat-locked hidden">🔒 Chat closed — your team's word has been submitted.</div>
+        <div class="team-chat-input-row">
+          <input id="team-chat-input" type="text" maxlength="200" placeholder="Discuss the secret word…"
+                 autocomplete="off" autocorrect="off" spellcheck="false" />
+          <button id="btn-team-chat-send" class="btn btn-primary btn-sm">Send</button>
+        </div>
+      </div>
+
+      <div class="field" id="secret-word-field">
         <label for="secret-word-input">Secret word</label>
         <input id="secret-word-input" type="text" autocomplete="off" autocorrect="off"
                autocapitalize="characters" spellcheck="false"
                placeholder="Only you will see this" />
       </div>
+
+      <p id="team-waiting-leader" class="status-msg hidden">👑 Waiting for your team leader to choose the secret word…</p>
 
       <button id="btn-ready" class="btn btn-primary btn-full">I'm Ready</button>
 
@@ -241,7 +264,10 @@
 
       <!-- Your own word -->
       <div class="own-word-section">
-        <span class="section-label">Your word <span class="muted-label">(only you see this)</span></span>
+        <span class="section-label">Your word <span class="muted-label">(only you see this)</span>
+          <button id="btn-toggle-own-word" class="btn-eye-toggle" type="button"
+                  aria-label="Show or hide your secret word" title="Show/Hide your word">👁️</button>
+        </span>
         <div id="own-word" class="own-word"></div>
       </div>
 

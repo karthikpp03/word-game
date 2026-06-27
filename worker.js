@@ -97,6 +97,10 @@ export class GameRoom {
   constructor(state, env) {
     this.state = state;
     this.env = env;
+    // Tracks clientIds whose old socket we are intentionally closing because
+    // a newer connection for the same client just took over (see handleJoin).
+    // Their close event should NOT be treated as a real player disconnect.
+    this.pendingDedupClientIds = new Set();
   }
 
   async loadState() {
@@ -164,6 +168,7 @@ export class GameRoom {
       case "startTeamGame":  await this.handleStartTeamGame(ws, username, room); break;
       case "suggestAction":  await this.handleSuggestAction(ws, username, data, room); break;
       case "endTurn":        await this.handleEndTurn(ws, username, room); break;
+      case "teamChat":       await this.handleTeamChat(ws, username, data.message, room); break;
       default:
         ws.send(JSON.stringify({ type: "error", message: "Unknown action" }));
     }
@@ -174,8 +179,16 @@ export class GameRoom {
 
   async handleDisconnect(ws) {
     const tags = this.state.getTags(ws);
+    const clientId = tags[0];
     const username = tags[1];
     if (!username) return;
+
+    // This socket was closed intentionally because a newer connection for
+    // the same client already took over — the player isn't actually gone.
+    if (clientId && this.pendingDedupClientIds.has(clientId)) {
+      this.pendingDedupClientIds.delete(clientId);
+      return;
+    }
 
     const room = await this.loadState();
     if (!room) return;
@@ -197,6 +210,7 @@ export class GameRoom {
         if (room.teams[t]) {
           room.teams[t].members = room.teams[t].members.filter(m => m !== username);
           if (room.teams[t].leader === username) room.teams[t].leader = null;
+          maybeAutoAssignLeader(room, t);
         }
       });
     }
@@ -233,6 +247,20 @@ export class GameRoom {
   // --- Handlers ---
 
   async handleJoin(ws, clientId, username, room) {
+    // Connection fix: close any stale/duplicate sockets already attached for this
+    // client or username before continuing, so each player only ever has one
+    // live WebSocket attached to the Durable Object.
+    for (const otherWs of this.state.getWebSockets()) {
+      if (otherWs === ws) continue;
+      try {
+        const otherTags = this.state.getTags(otherWs);
+        if (otherTags[0] === clientId || otherTags[1] === username) {
+          if (otherTags[0]) this.pendingDedupClientIds.add(otherTags[0]);
+          try { otherWs.close(4000, "duplicate-connection"); } catch {}
+        }
+      } catch {}
+    }
+
     const existing = room.players.find((p) => p.id === clientId);
     if (existing) {
       ws.send(JSON.stringify({
@@ -318,9 +346,14 @@ export class GameRoom {
     ["A", "B"].forEach(t => {
       room.teams[t].members = room.teams[t].members.filter(m => m !== username);
       if (room.teams[t].leader === username) room.teams[t].leader = null;
+      maybeAutoAssignLeader(room, t);
     });
 
     room.teams[team].members.push(username);
+    // A lone player on a team is automatically the leader. Once a second
+    // player joins, the team keeps its existing leader (manual selection
+    // is available via "setLeader") instead of being reassigned.
+    maybeAutoAssignLeader(room, team);
     await this.saveState(room);
     this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
   }
@@ -379,6 +412,8 @@ export class GameRoom {
     room.phase = "words";
     room.endReason = null;
     room.players.forEach((p) => { p.ready = false; p.secretWord = null; p.revealedWord = null; });
+    room.teams.A.secretWord = null;
+    room.teams.B.secretWord = null;
     // Team turns: track which team's turn it is (leaders alternate)
     room.teamTurn = "A"; // Team A goes first
     await this.saveState(room);
@@ -407,6 +442,37 @@ export class GameRoom {
         value: data.value,
       }));
     }
+  }
+
+  async handleTeamChat(ws, username, message, room) {
+    if (room.gameMode !== "team") {
+      ws.send(JSON.stringify({ type: "error", message: "Team Chat is only available in Team Battle." }));
+      return;
+    }
+    const myTeam = ["A", "B"].find(t => room.teams[t]?.members.includes(username));
+    if (!myTeam) {
+      ws.send(JSON.stringify({ type: "error", message: "You must be on a team to use Team Chat." }));
+      return;
+    }
+    if (room.phase !== "words") {
+      ws.send(JSON.stringify({ type: "error", message: "Team Chat is closed." }));
+      return;
+    }
+    if (room.teams[myTeam].secretWord) {
+      ws.send(JSON.stringify({ type: "error", message: "Team Chat is locked — the word has been submitted." }));
+      return;
+    }
+
+    const text = typeof message === "string" ? message.trim().slice(0, 300) : "";
+    if (!text) return;
+
+    // Only teammates can see this message.
+    room.teams[myTeam].members.forEach(m => {
+      const sock = this.getSocketForUser(m);
+      if (sock) {
+        sock.send(JSON.stringify({ type: "teamChatMessage", from: username, message: text, ts: Date.now() }));
+      }
+    });
   }
 
   async handleEndTurn(ws, username, room) {
@@ -450,6 +516,45 @@ export class GameRoom {
 
     if (!/^[A-Z]+$/.test(cleaned)) {
       ws.send(JSON.stringify({ type: "error", message: "Your word must contain only letters." }));
+      return;
+    }
+
+    if (room.gameMode === "team") {
+      // Team Battle: only ONE secret word per team, and only the team leader may submit it.
+      const myTeam = ["A", "B"].find(t => room.teams[t]?.members.includes(username));
+      if (!myTeam) { ws.send(JSON.stringify({ type: "error", message: "You must be on a team first." })); return; }
+      if (room.teams[myTeam].leader !== username) {
+        ws.send(JSON.stringify({ type: "error", message: "Only your Team Leader can submit the secret word." }));
+        return;
+      }
+      if (room.teams[myTeam].secretWord) {
+        ws.send(JSON.stringify({ type: "error", message: "Your team's word has already been submitted." }));
+        return;
+      }
+
+      const revealed = "_".repeat(cleaned.length).split("");
+      room.teams[myTeam].secretWord = cleaned;
+      room.teams[myTeam].members.forEach(m => {
+        const p = room.players.find(pl => pl.username === m);
+        if (p) {
+          p.secretWord = cleaned;
+          p.ready = true;
+          p.revealedWord = revealed.slice();
+        }
+      });
+
+      await this.saveState(room);
+      ws.send(JSON.stringify({ type: "wordAccepted" }));
+
+      // Make sure every teammate (not just the leader) knows the shared word
+      // and that their team chat is now locked.
+      room.teams[myTeam].members.forEach(m => {
+        const sock = this.getSocketForUser(m);
+        if (sock) sock.send(JSON.stringify({ type: "teamWordSet", word: cleaned }));
+      });
+
+      this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
+      await this.maybeAdvanceFromWords(room);
       return;
     }
 
@@ -546,6 +651,7 @@ export class GameRoom {
       for (let i = 0; i < secretWord.length; i++) {
         if (secretWord[i] === L) target.revealedWord[i] = L;
       }
+      if (room.gameMode === "team") this.syncTeamWordState(room, target.username);
       if (!target.revealedWord.includes("_")) {
         room.winner = username;
         room.winnerWord = secretWord;
@@ -563,6 +669,7 @@ export class GameRoom {
     } else {
       if (!room.wrongLetters[target.username]) room.wrongLetters[target.username] = [];
       room.wrongLetters[target.username].push(L);
+      if (room.gameMode === "team") this.syncTeamWordState(room, target.username);
     }
 
     this.broadcast(room, { type: "letterResult", asker: username, target: target.username, letter: L, found });
@@ -663,6 +770,29 @@ export class GameRoom {
     }
     return null;
   }
+
+  // Team Battle: every member of a team shares the same single secret word.
+  // After any update to one member's revealedWord/usedLetters/wrongLetters
+  // (the "source"), copy that state onto the rest of the team so all
+  // teammates' player records stay identical.
+  syncTeamWordState(room, sourceUsername) {
+    const team = ["A", "B"].find(t => room.teams[t]?.members.includes(sourceUsername));
+    if (!team) return;
+    const source = room.players.find(p => p.username === sourceUsername);
+    if (!source) return;
+
+    const revealed = source.revealedWord ? source.revealedWord.slice() : null;
+    const used = (room.usedLetters[sourceUsername] || []).slice();
+    const wrong = (room.wrongLetters[sourceUsername] || []).slice();
+
+    room.teams[team].members.forEach(m => {
+      if (m === sourceUsername) return;
+      const p = room.players.find(pl => pl.username === m);
+      if (p && revealed) p.revealedWord = revealed.slice();
+      room.usedLetters[m] = used.slice();
+      room.wrongLetters[m] = wrong.slice();
+    });
+  }
 }
 
 // =============================================================
@@ -690,6 +820,21 @@ function createEmptyRoom(code, wordLength, gameMode = "classic") {
 }
 
 function sanitizeRoom(room) {
+  const teams = room.teams ? {
+    A: {
+      members: room.teams.A.members,
+      leader: room.teams.A.leader,
+      hasWord: !!room.teams.A.secretWord,
+      secretWord: room.phase === "ended" ? (room.teams.A.secretWord || null) : null,
+    },
+    B: {
+      members: room.teams.B.members,
+      leader: room.teams.B.leader,
+      hasWord: !!room.teams.B.secretWord,
+      secretWord: room.phase === "ended" ? (room.teams.B.secretWord || null) : null,
+    },
+  } : room.teams;
+
   return {
     code: room.code,
     wordLength: room.wordLength,
@@ -702,7 +847,7 @@ function sanitizeRoom(room) {
     endReason: room.endReason,
     wrongLetters: room.wrongLetters,
     gameMode: room.gameMode,
-    teams: room.teams,
+    teams,
     teamTurn: room.teamTurn,
     players: room.players.map((p) => ({
       username: p.username,
@@ -713,6 +858,22 @@ function sanitizeRoom(room) {
       word: room.phase === "ended" ? (p.secretWord || null) : null,
     })),
   };
+}
+
+// Team Leader rule: a team with exactly one player automatically has that
+// player as leader. Once a second player joins, the existing leader is left
+// in place (teammates can change it via "setLeader"). If a team becomes
+// empty, or its leader leaves, the leader is cleared/reassigned accordingly.
+function maybeAutoAssignLeader(room, team) {
+  const t = room.teams[team];
+  if (!t) return;
+  if (t.members.length === 1) {
+    t.leader = t.members[0];
+  } else if (t.members.length === 0) {
+    t.leader = null;
+  } else if (t.leader && !t.members.includes(t.leader)) {
+    t.leader = null;
+  }
 }
 
 function getNextPlayer(room) {

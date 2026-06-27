@@ -108,8 +108,26 @@ $("join-code").addEventListener("keydown", (e) => {
 // =============================================================
 // WebSocket Connection
 // =============================================================
+let wsGeneration = 0;     // bumped on every (re)connect attempt
+let reconnectTimer = null; // single pending reconnect timer
+
 function connectWebSocket() {
-  if (state.ws) { state.ws.close(); state.ws = null; }
+  // Cancel any pending reconnect attempt — we're connecting right now.
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  // This connection attempt's generation. Any events from a socket created
+  // by a previous attempt will be ignored once a newer attempt has started,
+  // which prevents duplicate/stale sockets from firing duplicate reconnects
+  // or stomping on the current connection's state.
+  const myGeneration = ++wsGeneration;
+
+  if (state.ws) {
+    try { state.ws.close(); } catch {}
+    state.ws = null;
+  }
 
   let clientId = localStorage.getItem("clientId");
   if (!clientId) {
@@ -125,23 +143,31 @@ function connectWebSocket() {
   state.ws = ws;
 
   ws.addEventListener("open", () => {
+    if (myGeneration !== wsGeneration) return; // superseded by a newer attempt
     ws.send(JSON.stringify({ type: "join" }));
   });
 
   ws.addEventListener("message", (event) => {
+    if (myGeneration !== wsGeneration) return; // ignore stale socket's messages
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
     handleMessage(msg);
   });
 
   ws.addEventListener("close", () => {
+    if (myGeneration !== wsGeneration) return; // a newer connection already took over
+    state.ws = null;
     if (state.roomCode) {
       toast("Connection lost. Reconnecting…", "error");
-      setTimeout(() => { if (state.roomCode) connectWebSocket(); }, 2000);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (state.roomCode && myGeneration === wsGeneration) connectWebSocket();
+      }, 2000);
     }
   });
 
   ws.addEventListener("error", () => {
+    if (myGeneration !== wsGeneration) return;
     toast("Connection error. Retrying…", "error");
   });
 }
@@ -174,6 +200,16 @@ function handleMessage(msg) {
       showSuggestionPopup(msg);
       break;
 
+    case "teamChatMessage":
+      appendTeamChatMessage(msg.from, msg.message);
+      break;
+
+    case "teamWordSet":
+      state.mySecretWord = msg.word;
+      closeTeamChat(true);
+      renderCurrentPhase();
+      break;
+
     case "error":
       toast(msg.message, "error");
       break;
@@ -183,9 +219,16 @@ function handleMessage(msg) {
 // =============================================================
 // Phase Router
 // =============================================================
+let lastRenderedPhase = null;
 function renderCurrentPhase() {
   const room = state.room;
   if (!room) return;
+
+  if (room.phase !== lastRenderedPhase) {
+    if (room.phase === "words") resetTeamChatUI();
+    lastRenderedPhase = room.phase;
+  }
+
   switch (room.phase) {
     case "lobby":     renderLobby();     break;
     case "teams":     renderTeams();     break;
@@ -385,6 +428,7 @@ $("btn-teams-start").addEventListener("click", () => {
 function renderWords() {
   showScreen("words");
   const room = state.room;
+  const isTeamMode = room.gameMode === "team";
 
   $("word-length-hint").textContent =
     `Choose a secret word that is exactly ${room.wordLength} letters long. Your opponent must guess it.`;
@@ -406,15 +450,66 @@ function renderWords() {
     list.appendChild(div);
   });
 
-  const me = room.players.find((p) => p.username === state.username);
-  if (me && me.ready) {
-    $("secret-word-input").disabled = true;
-    $("btn-ready").disabled = true;
-    $("btn-ready").textContent = "Waiting for others…";
+  const teamHeader      = $("team-word-header");
+  const roleBadge       = $("team-word-role-badge");
+  const chatToggleBtn   = $("btn-team-chat-toggle");
+  const chatPanel       = $("team-chat-panel");
+  const waitingLeaderEl = $("team-waiting-leader");
+  const wordField       = $("secret-word-field");
+  const readyBtn        = $("btn-ready");
+
+  if (isTeamMode) {
+    const myTeam = ["A", "B"].find(t => room.teams[t].members.includes(state.username));
+    const leader = myTeam ? room.teams[myTeam].leader : null;
+    const isLeader = !!myTeam && leader === state.username;
+    const teamSubmitted = !!myTeam && !!room.teams[myTeam].hasWord;
+
+    teamHeader.classList.remove("hidden");
+    roleBadge.textContent = isLeader ? "👑 You are the Team Leader" : `👑 Leader: ${leader || "—"}`;
+    chatToggleBtn.classList.toggle("hidden", teamSubmitted);
+
+    if (isLeader) {
+      wordField.classList.remove("hidden");
+      readyBtn.classList.remove("hidden");
+      waitingLeaderEl.classList.add("hidden");
+
+      const me = room.players.find((p) => p.username === state.username);
+      if (me && me.ready) {
+        $("secret-word-input").disabled = true;
+        readyBtn.disabled = true;
+        readyBtn.textContent = "Waiting for the other team…";
+      } else {
+        $("secret-word-input").disabled = false;
+        readyBtn.disabled = false;
+        readyBtn.textContent = "Submit Team Word";
+      }
+    } else {
+      wordField.classList.add("hidden");
+      readyBtn.classList.add("hidden");
+      waitingLeaderEl.classList.remove("hidden");
+      waitingLeaderEl.textContent = teamSubmitted
+        ? "✓ Your team leader has submitted your word."
+        : "👑 Waiting for your team leader to choose the secret word…";
+    }
+
+    if (teamSubmitted) closeTeamChat(true);
   } else {
-    $("secret-word-input").disabled = false;
-    $("btn-ready").disabled = false;
-    $("btn-ready").textContent = "I'm Ready";
+    teamHeader.classList.add("hidden");
+    chatPanel.classList.add("hidden");
+    wordField.classList.remove("hidden");
+    readyBtn.classList.remove("hidden");
+    waitingLeaderEl.classList.add("hidden");
+
+    const me = room.players.find((p) => p.username === state.username);
+    if (me && me.ready) {
+      $("secret-word-input").disabled = true;
+      readyBtn.disabled = true;
+      readyBtn.textContent = "Waiting for others…";
+    } else {
+      $("secret-word-input").disabled = false;
+      readyBtn.disabled = false;
+      readyBtn.textContent = "I'm Ready";
+    }
   }
 }
 
@@ -431,6 +526,66 @@ $("btn-ready").addEventListener("click", () => {
 
 $("secret-word-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("btn-ready").click();
+});
+
+// =============================================================
+// Team Chat (Team Battle — discuss the secret word with teammates)
+// =============================================================
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function resetTeamChatUI() {
+  $("team-chat-messages").innerHTML = "";
+  $("team-chat-input").value = "";
+  $("team-chat-input").disabled = false;
+  $("btn-team-chat-send").disabled = false;
+  $("team-chat-locked-msg").classList.add("hidden");
+  $("team-chat-panel").classList.add("hidden");
+  $("btn-team-chat-toggle").classList.remove("hidden");
+}
+
+function appendTeamChatMessage(from, message) {
+  const container = $("team-chat-messages");
+  const row = document.createElement("div");
+  row.className = "team-chat-msg" + (from === state.username ? " is-me" : "");
+  row.innerHTML = `<span class="team-chat-from">${escapeHtml(from)}</span><span class="team-chat-text">${escapeHtml(message)}</span>`;
+  container.appendChild(row);
+  container.scrollTop = container.scrollHeight;
+}
+
+function closeTeamChat(locked) {
+  $("team-chat-panel").classList.add("hidden");
+  if (locked) {
+    $("team-chat-input").disabled = true;
+    $("btn-team-chat-send").disabled = true;
+    $("team-chat-locked-msg").classList.remove("hidden");
+    $("btn-team-chat-toggle").classList.add("hidden");
+  }
+}
+
+function sendTeamChat() {
+  const input = $("team-chat-input");
+  const text = input.value.trim();
+  if (!text) return;
+  send({ type: "teamChat", message: text });
+  input.value = "";
+}
+
+$("btn-team-chat-toggle").addEventListener("click", () => {
+  $("team-chat-panel").classList.toggle("hidden");
+});
+
+$("btn-team-chat-close").addEventListener("click", () => {
+  $("team-chat-panel").classList.add("hidden");
+});
+
+$("btn-team-chat-send").addEventListener("click", sendTeamChat);
+
+$("team-chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendTeamChat();
 });
 
 // =============================================================
@@ -609,6 +764,8 @@ function renderWrongLetters(letters) {
   });
 }
 
+let ownWordVisible = true; // local-only display toggle; never affects gameplay/sync
+
 function renderOwnWord(revealedWord) {
   const container = $("own-word");
   container.innerHTML = "";
@@ -619,13 +776,27 @@ function renderOwnWord(revealedWord) {
 
   for (let i = 0; i < length; i++) {
     const box = document.createElement("div");
-    const letter = word[i] || (revealedWord[i] !== "_" ? revealedWord[i] : "?");
     const opponentFound = revealedWord && revealedWord[i] && revealedWord[i] !== "_";
+    const actualLetter = word[i] || (opponentFound ? revealedWord[i] : "?");
+    // Hiding is purely visual: letters the opponent has already found stay
+    // visible (and keep their green highlight); only your still-secret
+    // letters are masked when visibility is toggled off.
+    const displayLetter = (!ownWordVisible && !opponentFound) ? "•" : actualLetter;
     box.className = "own-letter" + (opponentFound ? " opponent-found" : "");
-    box.textContent = letter;
+    box.textContent = displayLetter;
     container.appendChild(box);
   }
 }
+
+// Secret Word Visibility toggle (local-only, doesn't touch gameplay/sync)
+$("btn-toggle-own-word").addEventListener("click", () => {
+  ownWordVisible = !ownWordVisible;
+  $("btn-toggle-own-word").textContent = ownWordVisible ? "👁️" : "🙈";
+  const room = state.room;
+  if (!room) return;
+  const me = room.players.find((p) => p.username === state.username);
+  renderOwnWord(me?.revealedWord || []);
+});
 
 // Ask Letter
 $("btn-ask").addEventListener("click", () => {
