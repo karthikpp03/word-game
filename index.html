@@ -11,6 +11,9 @@
   <!-- ── Toast notification ── -->
   <div id="toast" class="toast" role="alert" aria-live="polite"></div>
 
+  <!-- ── Floating emoji reaction layer (works in Classic & Team Battle) ── -->
+  <div id="reaction-float-layer" class="reaction-float-layer" aria-hidden="true"></div>
+
   <!-- ── Suggestion popup (Team Battle) ── -->
   <div id="suggestion-popup" class="suggestion-popup hidden">
     <div class="suggestion-popup-inner">
@@ -216,6 +219,12 @@
 
       <p id="team-waiting-leader" class="status-msg hidden">👑 Waiting for your team leader to choose the secret word…</p>
 
+      <!-- Team Battle: reveal the team's word to every teammate once submitted -->
+      <div id="team-word-reveal" class="team-word-reveal hidden">
+        <span class="section-label">Your Team's Secret Word</span>
+        <div id="team-word-reveal-letters" class="own-word"></div>
+      </div>
+
       <button id="btn-ready" class="btn btn-primary btn-full">I'm Ready</button>
 
       <div class="section-label" style="margin-top:1.5rem;">Players</div>
@@ -239,6 +248,24 @@
   ══════════════════════════════════════════ -->
   <div id="screen-playing" class="screen">
     <div class="card game-card">
+
+      <!-- Emoji Reactions (Classic & Team Battle) -->
+      <div class="reaction-bar">
+        <button id="btn-reaction-toggle" class="btn-emoji-toggle" type="button"
+                aria-label="React with an emoji" title="React">😀</button>
+        <div id="reaction-picker" class="reaction-picker hidden">
+          <button class="reaction-emoji-btn" data-emoji="😂">😂</button>
+          <button class="reaction-emoji-btn" data-emoji="😭">😭</button>
+          <button class="reaction-emoji-btn" data-emoji="😡">😡</button>
+          <button class="reaction-emoji-btn" data-emoji="😱">😱</button>
+          <button class="reaction-emoji-btn" data-emoji="❤️">❤️</button>
+          <button class="reaction-emoji-btn" data-emoji="👏">👏</button>
+          <button class="reaction-emoji-btn" data-emoji="🔥">🔥</button>
+          <button class="reaction-emoji-btn" data-emoji="👍">👍</button>
+          <button class="reaction-emoji-btn" data-emoji="🤯">🤯</button>
+          <button class="reaction-emoji-btn" data-emoji="🎉">🎉</button>
+        </div>
+      </div>
 
       <!-- Team status banner (Team Battle only) -->
       <div id="team-status-banner" class="team-status-banner hidden"></div>

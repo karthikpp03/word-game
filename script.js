@@ -210,6 +210,10 @@ function handleMessage(msg) {
       renderCurrentPhase();
       break;
 
+    case "reaction":
+      handleReactionMessage(msg);
+      break;
+
     case "error":
       toast(msg.message, "error");
       break;
@@ -457,6 +461,7 @@ function renderWords() {
   const waitingLeaderEl = $("team-waiting-leader");
   const wordField       = $("secret-word-field");
   const readyBtn        = $("btn-ready");
+  const wordReveal      = $("team-word-reveal");
 
   if (isTeamMode) {
     const myTeam = ["A", "B"].find(t => room.teams[t].members.includes(state.username));
@@ -492,10 +497,20 @@ function renderWords() {
         : "👑 Waiting for your team leader to choose the secret word…";
     }
 
+    // Every member of the team (leader included) can immediately see their
+    // own team's secret word right here, before the host starts the game.
+    if (teamSubmitted && state.mySecretWord) {
+      wordReveal.classList.remove("hidden");
+      renderTeamWordReveal(state.mySecretWord);
+    } else {
+      wordReveal.classList.add("hidden");
+    }
+
     if (teamSubmitted) closeTeamChat(true);
   } else {
     teamHeader.classList.add("hidden");
     chatPanel.classList.add("hidden");
+    wordReveal.classList.add("hidden");
     wordField.classList.remove("hidden");
     readyBtn.classList.remove("hidden");
     waitingLeaderEl.classList.add("hidden");
@@ -511,6 +526,17 @@ function renderWords() {
       readyBtn.textContent = "I'm Ready";
     }
   }
+}
+
+function renderTeamWordReveal(word) {
+  const container = $("team-word-reveal-letters");
+  container.innerHTML = "";
+  word.split("").forEach((ch) => {
+    const box = document.createElement("div");
+    box.className = "own-letter";
+    box.textContent = ch;
+    container.appendChild(box);
+  });
 }
 
 $("btn-ready").addEventListener("click", () => {
@@ -908,6 +934,48 @@ function handleLetterResult(msg) {
   } else {
     toast(`✗  "${msg.letter.toUpperCase()}" is not in ${msg.target}'s word.`, "error");
   }
+}
+
+// =============================================================
+// Emoji Reactions (Classic & Team Battle)
+// =============================================================
+const REACTION_COOLDOWN_MS = 3000;
+let reactionCooldownUntil = 0;
+
+$("btn-reaction-toggle").addEventListener("click", () => {
+  $("reaction-picker").classList.toggle("hidden");
+});
+
+document.querySelectorAll(".reaction-emoji-btn").forEach((btn) => {
+  btn.addEventListener("click", () => sendReaction(btn.dataset.emoji));
+});
+
+function sendReaction(emoji) {
+  const now = Date.now();
+  if (now < reactionCooldownUntil) return; // local cooldown guard against spam
+  reactionCooldownUntil = now + REACTION_COOLDOWN_MS;
+
+  send({ type: "reaction", emoji });
+  $("reaction-picker").classList.add("hidden");
+
+  const toggleBtn = $("btn-reaction-toggle");
+  toggleBtn.disabled = true;
+  setTimeout(() => { toggleBtn.disabled = false; }, REACTION_COOLDOWN_MS);
+}
+
+function handleReactionMessage(msg) {
+  toast(`${msg.emoji} ${msg.from} reacted`, "info", 2000);
+  spawnFloatingReaction(msg.emoji);
+}
+
+function spawnFloatingReaction(emoji) {
+  const layer = $("reaction-float-layer");
+  const el = document.createElement("div");
+  el.className = "floating-reaction";
+  el.textContent = emoji;
+  el.style.left = `${10 + Math.random() * 75}%`;
+  layer.appendChild(el);
+  setTimeout(() => el.remove(), 2300);
 }
 
 // =============================================================

@@ -4,6 +4,8 @@
 
 const MAX_PLAYERS = 6;
 const MIN_PLAYERS_TO_PLAY = 2;
+const ALLOWED_REACTION_EMOJIS = ["😂", "😭", "😡", "😱", "❤️", "👏", "🔥", "👍", "🤯", "🎉"];
+const REACTION_COOLDOWN_MS = 3000;
 
 export default {
   async fetch(request, env) {
@@ -101,6 +103,8 @@ export class GameRoom {
     // a newer connection for the same client just took over (see handleJoin).
     // Their close event should NOT be treated as a real player disconnect.
     this.pendingDedupClientIds = new Set();
+    // Per-username cooldown tracking for emoji reactions (server-side anti-spam).
+    this.lastReactionAt = new Map();
   }
 
   async loadState() {
@@ -169,6 +173,7 @@ export class GameRoom {
       case "suggestAction":  await this.handleSuggestAction(ws, username, data, room); break;
       case "endTurn":        await this.handleEndTurn(ws, username, room); break;
       case "teamChat":       await this.handleTeamChat(ws, username, data.message, room); break;
+      case "reaction":       await this.handleReaction(ws, username, data.emoji, room); break;
       default:
         ws.send(JSON.stringify({ type: "error", message: "Unknown action" }));
     }
@@ -475,6 +480,21 @@ export class GameRoom {
     });
   }
 
+  // Team Battle: flip to the other team's turn. Falls back to any current
+  // member of that team (and repairs the stored leader) if the leader is
+  // somehow missing, so the turn can never get permanently stuck on one team.
+  advanceTeamTurn(room) {
+    const otherTeam = room.teamTurn === "A" ? "B" : "A";
+    room.teamTurn = otherTeam;
+
+    let leader = room.teams[otherTeam]?.leader;
+    if (!leader || !room.teams[otherTeam].members.includes(leader)) {
+      leader = room.teams[otherTeam]?.members?.[0] || null;
+      if (room.teams[otherTeam]) room.teams[otherTeam].leader = leader;
+    }
+    room.currentTurn = leader;
+  }
+
   async handleEndTurn(ws, username, room) {
     if (room.phase !== "playing") {
       ws.send(JSON.stringify({ type: "error", message: "Game is not in progress." }));
@@ -486,8 +506,7 @@ export class GameRoom {
     }
 
     if (room.gameMode === "team") {
-      room.teamTurn = room.teamTurn === "A" ? "B" : "A";
-      room.currentTurn = room.teams[room.teamTurn].leader;
+      this.advanceTeamTurn(room);
     } else {
       room.currentTurn = getNextPlayer(room);
     }
@@ -716,14 +735,34 @@ export class GameRoom {
       this.broadcast(room, { type: "wrongGuess", guesser: username, guess });
       // Wrong guess = pass turn
       if (room.gameMode === "team") {
-        room.teamTurn = room.teamTurn === "A" ? "B" : "A";
-        room.currentTurn = room.teams[room.teamTurn].leader;
+        this.advanceTeamTurn(room);
       } else {
         room.currentTurn = getNextPlayer(room);
       }
       await this.saveState(room);
       this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
     }
+  }
+
+  async handleReaction(ws, username, emoji, room) {
+    if (room.phase !== "playing") {
+      ws.send(JSON.stringify({ type: "error", message: "Reactions are only available during gameplay." }));
+      return;
+    }
+    if (!ALLOWED_REACTION_EMOJIS.includes(emoji)) {
+      ws.send(JSON.stringify({ type: "error", message: "That reaction isn't available." }));
+      return;
+    }
+
+    const now = Date.now();
+    const last = this.lastReactionAt.get(username) || 0;
+    if (now - last < REACTION_COOLDOWN_MS) {
+      return; // within cooldown — silently ignore to prevent spam
+    }
+    this.lastReactionAt.set(username, now);
+
+    // Works the same in Classic and Team Battle: every connected player sees it.
+    this.broadcast(room, { type: "reaction", from: username, emoji });
   }
 
   async handlePlayAgain(ws, username, room) {
