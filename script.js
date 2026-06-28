@@ -202,12 +202,12 @@ function handleMessage(msg) {
 
     case "teamChatMessage":
       appendTeamChatMessage(msg.from, msg.message, msg.ts);
-      notifyChat("team");
+      notifyChat("team", msg.from, msg.message);
       break;
 
     case "globalChatMessage":
       appendGlobalChatMessage(msg.from, msg.message, msg.ts);
-      notifyChat("global");
+      notifyChat("global", msg.from, msg.message);
       break;
 
     case "teamWordSet":
@@ -608,21 +608,22 @@ function appendGlobalChatMessage(from, message, ts) {
 // Chat unread badge / popup notification system
 const chatUnread = { team: 0, global: 0 };
 
-function notifyChat(type) {
+function notifyChat(type, from, message) {
   const isTeam = type === "team";
   // All panels for this chat type — if any is open, suppress notification
   const panelIds = isTeam
     ? ["team-chat-panel", "team-chat-panel-playing"]
     : ["global-chat-panel"];
+  // FIX 1: include "words-team-chat-badge" for team chat on word-selection screen
   const badgeIds = isTeam
     ? ["team-chat-badge", "words-team-chat-badge"]
-    : ["global-chat-badge"];
-  const notifId = isTeam ? "team-chat-notif" : "global-chat-notif";
+    : ["global-chat-badge", "classic-global-chat-badge"];
 
   const anyOpen = panelIds.some(id => { const p = $(id); return p && !p.classList.contains("hidden"); });
   if (anyOpen) return;
 
   chatUnread[type]++;
+
   badgeIds.forEach(badgeId => {
     const badge = $(badgeId);
     if (badge) {
@@ -631,11 +632,33 @@ function notifyChat(type) {
     }
   });
 
-  const notif = $(notifId);
-  if (notif) {
-    notif.classList.remove("hidden");
-    clearTimeout(notif._hideTimer);
-    notif._hideTimer = setTimeout(() => notif.classList.add("hidden"), 3000);
+  // FIX 1: Show popup on words screen for team chat; on playing screen for both
+  // Build notification text with sender + preview
+  const icon = isTeam ? "💬" : "🌍";
+  const preview = message ? `"${message.slice(0, 28)}${message.length > 28 ? "…" : ""}"` : "";
+  const notifHtml = from
+    ? `<strong>${icon} ${escapeHtml(from)}</strong><br><span style="opacity:0.85">${escapeHtml(preview)}</span>`
+    : `${icon} New ${isTeam ? "team" : "global"} message`;
+
+  // Show on playing screen
+  const playingNotifId = isTeam ? "team-chat-notif" : "global-chat-notif";
+  const playingNotif = $(playingNotifId);
+  if (playingNotif) {
+    playingNotif.innerHTML = notifHtml;
+    playingNotif.classList.remove("hidden");
+    clearTimeout(playingNotif._hideTimer);
+    playingNotif._hideTimer = setTimeout(() => playingNotif.classList.add("hidden"), 3500);
+  }
+
+  // FIX 1: Show on words screen too for team chat
+  if (isTeam) {
+    const wordsNotif = $("words-team-chat-notif");
+    if (wordsNotif) {
+      wordsNotif.innerHTML = notifHtml;
+      wordsNotif.classList.remove("hidden");
+      clearTimeout(wordsNotif._hideTimer);
+      wordsNotif._hideTimer = setTimeout(() => wordsNotif.classList.add("hidden"), 3500);
+    }
   }
 }
 
@@ -643,14 +666,18 @@ function clearChatBadge(type) {
   chatUnread[type] = 0;
   const badgeIds = type === "team"
     ? ["team-chat-badge", "words-team-chat-badge"]
-    : ["global-chat-badge"];
-  const notifId = type === "team" ? "team-chat-notif" : "global-chat-notif";
+    : ["global-chat-badge", "classic-global-chat-badge"];
+  const notifIds = type === "team"
+    ? ["team-chat-notif", "words-team-chat-notif"]
+    : ["global-chat-notif"];
   badgeIds.forEach(badgeId => {
     const badge = $(badgeId);
     if (badge) badge.classList.add("hidden");
   });
-  const notif = $(notifId);
-  if (notif) notif.classList.add("hidden");
+  notifIds.forEach(notifId => {
+    const notif = $(notifId);
+    if (notif) notif.classList.add("hidden");
+  });
 }
 
 function closeTeamChat(locked) {
@@ -699,6 +726,15 @@ $("team-chat-input").addEventListener("keydown", (e) => {
 
 // Global Chat (Team Battle — playing phase only, visible to all players)
 $("btn-global-chat-toggle").addEventListener("click", () => {
+  $("global-chat-panel").classList.toggle("hidden");
+  if (!$("global-chat-panel").classList.contains("hidden")) {
+    clearChatBadge("global");
+    $("global-chat-messages").scrollTop = $("global-chat-messages").scrollHeight;
+  }
+});
+
+// FIX 2: Classic mode global chat toggle (same panel, different button)
+$("btn-classic-global-chat-toggle").addEventListener("click", () => {
   $("global-chat-panel").classList.toggle("hidden");
   if (!$("global-chat-panel").classList.contains("hidden")) {
     clearChatBadge("global");
@@ -868,10 +904,13 @@ function renderPlaying() {
 
     // Show Team Chat and Global Chat buttons during gameplay
     $("playing-team-chat-btn").classList.remove("hidden");
+    $("playing-classic-global-btn").classList.add("hidden");
     $("playing-global-chat-btn").classList.remove("hidden");
   } else {
     $("playing-team-chat-btn").classList.add("hidden");
     $("playing-global-chat-btn").classList.add("hidden");
+    // FIX 2: Show global chat button for Classic mode
+    $("playing-classic-global-btn").classList.remove("hidden");
     if (isMyTurn) {
       controls.classList.remove("hidden");
       teammatePanel.classList.add("hidden");
@@ -1210,3 +1249,59 @@ function send(data) {
     toast("Not connected. Reconnecting…", "error");
   }
 }
+
+// =============================================================
+// Background Particle Animation
+// =============================================================
+(function initParticles() {
+  const canvas = document.getElementById("bg-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+
+  const particles = [];
+  const PARTICLE_COUNT = 55;
+  const COLORS = [
+    "rgba(99,102,241,",
+    "rgba(168,85,247,",
+    "rgba(6,182,212,",
+    "rgba(20,184,166,",
+  ];
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener("resize", resize);
+
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particles.push({
+      x:     Math.random() * window.innerWidth,
+      y:     Math.random() * window.innerHeight,
+      r:     1 + Math.random() * 2.5,
+      dx:    (Math.random() - 0.5) * 0.35,
+      dy:    (Math.random() - 0.5) * 0.35,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      alpha: 0.15 + Math.random() * 0.3,
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const p of particles) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = p.color + p.alpha + ")";
+      ctx.fill();
+
+      p.x += p.dx;
+      p.y += p.dy;
+      if (p.x < -10)               p.x = canvas.width + 10;
+      if (p.x > canvas.width + 10)  p.x = -10;
+      if (p.y < -10)               p.y = canvas.height + 10;
+      if (p.y > canvas.height + 10) p.y = -10;
+    }
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();

@@ -4,9 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WordGuess – Multiplayer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+
+  <!-- ── Animated background particles ── -->
+  <canvas id="bg-canvas" class="bg-canvas" aria-hidden="true"></canvas>
 
   <!-- ── Toast notification ── -->
   <div id="toast" class="toast" role="alert" aria-live="polite"></div>
@@ -192,7 +198,10 @@
       <!-- Team Battle: leader role badge + Team Chat toggle -->
       <div id="team-word-header" class="team-word-header hidden">
         <span id="team-word-role-badge" class="badge badge-leader-role"></span>
-        <button id="btn-team-chat-toggle" class="btn btn-secondary btn-chat-toggle">💬 Team Chat</button>
+        <!-- FIX 1: Badge added to words-screen Team Chat button -->
+        <button id="btn-team-chat-toggle" class="btn btn-secondary btn-chat-toggle">
+          💬 Team Chat <span id="words-team-chat-badge" class="chat-badge hidden">0</span>
+        </button>
       </div>
 
       <!-- Team Chat panel (Team Battle only, locked once the word is submitted) -->
@@ -209,6 +218,9 @@
           <button id="btn-team-chat-send" class="btn btn-primary btn-sm">Send</button>
         </div>
       </div>
+
+      <!-- FIX 1: Popup notification for words-screen team chat -->
+      <div id="words-team-chat-notif" class="chat-notif hidden"></div>
 
       <div class="field" id="secret-word-field">
         <label for="secret-word-input">Secret word</label>
@@ -348,7 +360,8 @@
         Waiting for your turn…
       </p>
 
-      <!-- Team Battle chat buttons (shown in team mode only) -->
+      <!-- FIX 2: Chat button row — Team mode shows both, Classic shows only Global -->
+      <!-- Team Battle chat buttons -->
       <div id="playing-team-chat-btn" class="playing-chat-row hidden">
         <button id="btn-team-chat-toggle-playing" class="btn btn-chat-team" type="button">
           💬 Team Chat <span id="team-chat-badge" class="chat-badge hidden">0</span>
@@ -357,11 +370,17 @@
           🌍 Global Chat <span id="global-chat-badge" class="chat-badge hidden">0</span>
         </button>
       </div>
+      <!-- FIX 2: Classic mode Global Chat button (separate row) -->
+      <div id="playing-classic-global-btn" class="playing-chat-row hidden">
+        <button id="btn-classic-global-chat-toggle" class="btn btn-chat-global btn-full" type="button">
+          🌍 Global Chat <span id="classic-global-chat-badge" class="chat-badge hidden">0</span>
+        </button>
+      </div>
       <div id="playing-global-chat-btn" class="hidden"></div>
 
       <!-- Team Chat notification popups -->
-      <div id="team-chat-notif" class="chat-notif hidden">💬 New team message</div>
-      <div id="global-chat-notif" class="chat-notif chat-notif-global hidden">🌍 New global message</div>
+      <div id="team-chat-notif" class="chat-notif hidden"></div>
+      <div id="global-chat-notif" class="chat-notif chat-notif-global hidden"></div>
 
       <!-- Team Chat popup panel (playing phase) -->
       <div id="team-chat-panel-playing" class="chat-popup hidden">
@@ -376,7 +395,7 @@
         </div>
       </div>
 
-      <!-- Global Chat popup panel -->
+      <!-- Global Chat popup panel (Team Battle + Classic) -->
       <div id="global-chat-panel" class="chat-popup hidden">
         <div class="chat-popup-header">
           <span>🌍 Global Chat</span>
