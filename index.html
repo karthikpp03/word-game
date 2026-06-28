@@ -351,6 +351,47 @@
         </span>
         Waiting for your turn…
       </p>
+
+      <!-- Team Battle chat buttons (shown in team mode only) -->
+      <div id="playing-team-chat-btn" class="playing-chat-row hidden">
+        <button id="btn-team-chat-toggle-playing" class="btn btn-chat-team" type="button">
+          💬 Team Chat <span id="team-chat-badge" class="chat-badge hidden">0</span>
+        </button>
+        <button id="btn-global-chat-toggle" class="btn btn-chat-global" type="button">
+          🌍 Global Chat <span id="global-chat-badge" class="chat-badge hidden">0</span>
+        </button>
+      </div>
+      <div id="playing-global-chat-btn" class="hidden"></div>
+
+      <!-- Team Chat notification popups -->
+      <div id="team-chat-notif" class="chat-notif hidden">💬 New team message</div>
+      <div id="global-chat-notif" class="chat-notif chat-notif-global hidden">🌍 New global message</div>
+
+      <!-- Team Chat popup panel (playing phase) -->
+      <div id="team-chat-panel-playing" class="chat-popup hidden">
+        <div class="chat-popup-header">
+          <span>💬 Team Chat</span>
+          <button id="btn-team-chat-close-playing" class="btn-chat-close">✕</button>
+        </div>
+        <div id="team-chat-messages-playing" class="chat-popup-messages"></div>
+        <div class="chat-popup-input-row">
+          <input id="team-chat-input-playing" type="text" placeholder="Message teammates…" maxlength="300" autocomplete="off" />
+          <button id="btn-team-chat-send-playing" class="btn btn-primary btn-sm">Send</button>
+        </div>
+      </div>
+
+      <!-- Global Chat popup panel -->
+      <div id="global-chat-panel" class="chat-popup hidden">
+        <div class="chat-popup-header">
+          <span>🌍 Global Chat</span>
+          <button id="btn-global-chat-close" class="btn-chat-close">✕</button>
+        </div>
+        <div id="global-chat-messages" class="chat-popup-messages"></div>
+        <div class="chat-popup-input-row">
+          <input id="global-chat-input" type="text" placeholder="Chat with everyone…" maxlength="300" autocomplete="off" />
+          <button id="btn-global-chat-send" class="btn btn-primary btn-sm">Send</button>
+        </div>
+      </div>
     </div>
   </div>
 

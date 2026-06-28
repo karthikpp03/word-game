@@ -201,7 +201,13 @@ function handleMessage(msg) {
       break;
 
     case "teamChatMessage":
-      appendTeamChatMessage(msg.from, msg.message);
+      appendTeamChatMessage(msg.from, msg.message, msg.ts);
+      notifyChat("team");
+      break;
+
+    case "globalChatMessage":
+      appendGlobalChatMessage(msg.from, msg.message, msg.ts);
+      notifyChat("global");
       break;
 
     case "teamWordSet":
@@ -573,13 +579,72 @@ function resetTeamChatUI() {
   $("btn-team-chat-toggle").classList.remove("hidden");
 }
 
-function appendTeamChatMessage(from, message) {
-  const container = $("team-chat-messages");
+function appendTeamChatMessage(from, message, ts) {
+  const timeStr = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  const tsHtml = timeStr ? `<span class="chat-ts">${timeStr}</span>` : "";
+
+  // Append to both the word-screen panel and the playing-screen panel
+  ["team-chat-messages", "team-chat-messages-playing"].forEach(containerId => {
+    const container = $(containerId);
+    if (!container) return;
+    const row = document.createElement("div");
+    row.className = "team-chat-msg" + (from === state.username ? " is-me" : "");
+    row.innerHTML = `<span class="team-chat-from">${escapeHtml(from)}</span><span class="team-chat-text">${escapeHtml(message)}</span>${tsHtml}`;
+    container.appendChild(row);
+    container.scrollTop = container.scrollHeight;
+  });
+}
+
+function appendGlobalChatMessage(from, message, ts) {
+  const container = $("global-chat-messages");
   const row = document.createElement("div");
-  row.className = "team-chat-msg" + (from === state.username ? " is-me" : "");
-  row.innerHTML = `<span class="team-chat-from">${escapeHtml(from)}</span><span class="team-chat-text">${escapeHtml(message)}</span>`;
+  row.className = "global-chat-msg" + (from === state.username ? " is-me" : "");
+  const timeStr = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  row.innerHTML = `<span class="global-chat-from">🌍 ${escapeHtml(from)}</span><span class="global-chat-text">${escapeHtml(message)}</span>${timeStr ? `<span class="chat-ts">${timeStr}</span>` : ""}`;
   container.appendChild(row);
   container.scrollTop = container.scrollHeight;
+}
+
+// Chat unread badge / popup notification system
+const chatUnread = { team: 0, global: 0 };
+
+function notifyChat(type) {
+  const isTeam = type === "team";
+  // For team chat, check both the word-screen and playing-screen panels
+  const panelIds = isTeam
+    ? ["team-chat-panel", "team-chat-panel-playing"]
+    : ["global-chat-panel"];
+  const badgeId = isTeam ? "team-chat-badge" : "global-chat-badge";
+  const notifId = isTeam ? "team-chat-notif" : "global-chat-notif";
+
+  // If any panel is open, no badge needed
+  const anyOpen = panelIds.some(id => { const p = $(id); return p && !p.classList.contains("hidden"); });
+  if (anyOpen) return;
+
+  chatUnread[type]++;
+  const badge = $(badgeId);
+  if (badge) {
+    badge.textContent = chatUnread[type];
+    badge.classList.remove("hidden");
+  }
+
+  // Show brief popup notification
+  const notif = $(notifId);
+  if (notif) {
+    notif.classList.remove("hidden");
+    clearTimeout(notif._hideTimer);
+    notif._hideTimer = setTimeout(() => notif.classList.add("hidden"), 3000);
+  }
+}
+
+function clearChatBadge(type) {
+  chatUnread[type] = 0;
+  const badgeId = type === "team" ? "team-chat-badge" : "global-chat-badge";
+  const notifId = type === "team" ? "team-chat-notif" : "global-chat-notif";
+  const badge = $(badgeId);
+  if (badge) badge.classList.add("hidden");
+  const notif = $(notifId);
+  if (notif) notif.classList.add("hidden");
 }
 
 function closeTeamChat(locked) {
@@ -600,8 +665,20 @@ function sendTeamChat() {
   input.value = "";
 }
 
+function sendGlobalChat() {
+  const input = $("global-chat-input");
+  const text = input.value.trim();
+  if (!text) return;
+  send({ type: "globalChat", message: text });
+  input.value = "";
+}
+
 $("btn-team-chat-toggle").addEventListener("click", () => {
   $("team-chat-panel").classList.toggle("hidden");
+  if (!$("team-chat-panel").classList.contains("hidden")) {
+    clearChatBadge("team");
+    $("team-chat-messages").scrollTop = $("team-chat-messages").scrollHeight;
+  }
 });
 
 $("btn-team-chat-close").addEventListener("click", () => {
@@ -612,6 +689,56 @@ $("btn-team-chat-send").addEventListener("click", sendTeamChat);
 
 $("team-chat-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendTeamChat();
+});
+
+// Global Chat (Team Battle — playing phase only, visible to all players)
+$("btn-global-chat-toggle").addEventListener("click", () => {
+  $("global-chat-panel").classList.toggle("hidden");
+  if (!$("global-chat-panel").classList.contains("hidden")) {
+    clearChatBadge("global");
+    $("global-chat-messages").scrollTop = $("global-chat-messages").scrollHeight;
+  }
+});
+
+$("btn-global-chat-close").addEventListener("click", () => {
+  $("global-chat-panel").classList.add("hidden");
+});
+
+$("btn-global-chat-send").addEventListener("click", sendGlobalChat);
+
+$("global-chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendGlobalChat();
+});
+
+// Playing-screen Team Chat toggle (separate panel, same message history)
+$("btn-team-chat-toggle-playing").addEventListener("click", () => {
+  $("team-chat-panel-playing").classList.toggle("hidden");
+  if (!$("team-chat-panel-playing").classList.contains("hidden")) {
+    clearChatBadge("team");
+    $("team-chat-messages-playing").scrollTop = $("team-chat-messages-playing").scrollHeight;
+  }
+});
+
+$("btn-team-chat-close-playing").addEventListener("click", () => {
+  $("team-chat-panel-playing").classList.add("hidden");
+});
+
+$("btn-team-chat-send-playing").addEventListener("click", () => {
+  const input = $("team-chat-input-playing");
+  const text = input.value.trim();
+  if (!text) return;
+  send({ type: "teamChat", message: text });
+  input.value = "";
+});
+
+$("team-chat-input-playing").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const input = $("team-chat-input-playing");
+    const text = input.value.trim();
+    if (!text) return;
+    send({ type: "teamChat", message: text });
+    input.value = "";
+  }
 });
 
 // =============================================================
@@ -732,7 +859,13 @@ function renderPlaying() {
       teammatePanel.classList.add("hidden");
       waitingTurn.classList.remove("hidden");
     }
+
+    // Show Team Chat and Global Chat buttons during gameplay
+    $("playing-team-chat-btn").classList.remove("hidden");
+    $("playing-global-chat-btn").classList.remove("hidden");
   } else {
+    $("playing-team-chat-btn").classList.add("hidden");
+    $("playing-global-chat-btn").classList.add("hidden");
     if (isMyTurn) {
       controls.classList.remove("hidden");
       teammatePanel.classList.add("hidden");

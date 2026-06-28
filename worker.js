@@ -173,6 +173,7 @@ export class GameRoom {
       case "suggestAction":  await this.handleSuggestAction(ws, username, data, room); break;
       case "endTurn":        await this.handleEndTurn(ws, username, room); break;
       case "teamChat":       await this.handleTeamChat(ws, username, data.message, room); break;
+      case "globalChat":     await this.handleGlobalChat(ws, username, data.message, room); break;
       case "reaction":       await this.handleReaction(ws, username, data.emoji, room); break;
       default:
         ws.send(JSON.stringify({ type: "error", message: "Unknown action" }));
@@ -459,11 +460,13 @@ export class GameRoom {
       ws.send(JSON.stringify({ type: "error", message: "You must be on a team to use Team Chat." }));
       return;
     }
-    if (room.phase !== "words") {
-      ws.send(JSON.stringify({ type: "error", message: "Team Chat is closed." }));
+    // Team Chat is available during word selection and gameplay; not before teams are formed.
+    if (!["words", "playing"].includes(room.phase)) {
+      ws.send(JSON.stringify({ type: "error", message: "Team Chat is not available right now." }));
       return;
     }
-    if (room.teams[myTeam].secretWord) {
+    // During word selection, lock chat once team word has been submitted.
+    if (room.phase === "words" && room.teams[myTeam].secretWord) {
       ws.send(JSON.stringify({ type: "error", message: "Team Chat is locked — the word has been submitted." }));
       return;
     }
@@ -480,11 +483,29 @@ export class GameRoom {
     });
   }
 
+  async handleGlobalChat(ws, username, message, room) {
+    if (room.gameMode !== "team") {
+      ws.send(JSON.stringify({ type: "error", message: "Global Chat is only available in Team Battle." }));
+      return;
+    }
+    // Global Chat is only available once gameplay starts.
+    if (room.phase !== "playing") {
+      ws.send(JSON.stringify({ type: "error", message: "Global Chat is only available during gameplay." }));
+      return;
+    }
+    const text = typeof message === "string" ? message.trim().slice(0, 300) : "";
+    if (!text) return;
+
+    // Broadcast to all players in the room.
+    this.broadcast(room, { type: "globalChatMessage", from: username, message: text, ts: Date.now() });
+  }
+
   // Team Battle: flip to the other team's turn. Falls back to any current
   // member of that team (and repairs the stored leader) if the leader is
   // somehow missing, so the turn can never get permanently stuck on one team.
   advanceTeamTurn(room) {
-    const otherTeam = room.teamTurn === "A" ? "B" : "A";
+    const currentTeam = room.teamTurn || "A";
+    const otherTeam = currentTeam === "A" ? "B" : "A";
     room.teamTurn = otherTeam;
 
     let leader = room.teams[otherTeam]?.leader;
@@ -500,9 +521,25 @@ export class GameRoom {
       ws.send(JSON.stringify({ type: "error", message: "Game is not in progress." }));
       return;
     }
-    if (room.currentTurn !== username) {
-      ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
-      return;
+
+    if (room.gameMode === "team") {
+      // In team mode, only the active team's leader can end the turn.
+      const myTeam = ["A", "B"].find(t => room.teams[t]?.members.includes(username));
+      if (!myTeam || room.teamTurn !== myTeam) {
+        ws.send(JSON.stringify({ type: "error", message: "It's not your team's turn." }));
+        return;
+      }
+      if (room.teams[myTeam].leader !== username) {
+        ws.send(JSON.stringify({ type: "error", message: "Only the team leader can end the turn." }));
+        return;
+      }
+      // Ensure currentTurn is synchronized with the active leader before advancing
+      room.currentTurn = username;
+    } else {
+      if (room.currentTurn !== username) {
+        ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
+        return;
+      }
     }
 
     if (room.gameMode === "team") {
@@ -642,9 +679,25 @@ export class GameRoom {
       ws.send(JSON.stringify({ type: "error", message: "The game is not currently in progress." }));
       return;
     }
-    if (room.currentTurn !== username) {
-      ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
-      return;
+
+    if (room.gameMode === "team") {
+      // In team mode, only the active team's leader may ask a letter.
+      const myTeam = ["A", "B"].find(t => room.teams[t]?.members.includes(username));
+      if (!myTeam || room.teamTurn !== myTeam) {
+        ws.send(JSON.stringify({ type: "error", message: "It's not your team's turn." }));
+        return;
+      }
+      if (room.teams[myTeam].leader !== username) {
+        ws.send(JSON.stringify({ type: "error", message: "Only the team leader can ask letters." }));
+        return;
+      }
+      // Keep currentTurn in sync with the acting leader.
+      room.currentTurn = username;
+    } else {
+      if (room.currentTurn !== username) {
+        ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
+        return;
+      }
     }
 
     if (!letter || letter.length !== 1 || !/^[A-Za-z]$/.test(letter)) {
@@ -709,9 +762,24 @@ export class GameRoom {
       ws.send(JSON.stringify({ type: "error", message: "The game is not currently in progress." }));
       return;
     }
-    if (room.currentTurn !== username) {
-      ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
-      return;
+
+    if (room.gameMode === "team") {
+      // In team mode, only the active team's leader may guess.
+      const myTeam = ["A", "B"].find(t => room.teams[t]?.members.includes(username));
+      if (!myTeam || room.teamTurn !== myTeam) {
+        ws.send(JSON.stringify({ type: "error", message: "It's not your team's turn." }));
+        return;
+      }
+      if (room.teams[myTeam].leader !== username) {
+        ws.send(JSON.stringify({ type: "error", message: "Only the team leader can guess the word." }));
+        return;
+      }
+      room.currentTurn = username;
+    } else {
+      if (room.currentTurn !== username) {
+        ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
+        return;
+      }
     }
 
     if (!word || !word.trim()) { ws.send(JSON.stringify({ type: "error", message: "Enter a word to guess." })); return; }
