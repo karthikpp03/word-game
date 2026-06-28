@@ -515,8 +515,6 @@ export class GameRoom {
     room.currentTurn = leader;
   }
 
-  }
-
   async handleSubmitWord(ws, username, word, room) {
     if (room.phase !== "words") {
       ws.send(JSON.stringify({ type: "error", message: "Not in the word submission phase." }));
