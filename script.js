@@ -610,25 +610,27 @@ const chatUnread = { team: 0, global: 0 };
 
 function notifyChat(type) {
   const isTeam = type === "team";
-  // For team chat, check both the word-screen and playing-screen panels
+  // All panels for this chat type — if any is open, suppress notification
   const panelIds = isTeam
     ? ["team-chat-panel", "team-chat-panel-playing"]
     : ["global-chat-panel"];
-  const badgeId = isTeam ? "team-chat-badge" : "global-chat-badge";
+  const badgeIds = isTeam
+    ? ["team-chat-badge", "words-team-chat-badge"]
+    : ["global-chat-badge"];
   const notifId = isTeam ? "team-chat-notif" : "global-chat-notif";
 
-  // If any panel is open, no badge needed
   const anyOpen = panelIds.some(id => { const p = $(id); return p && !p.classList.contains("hidden"); });
   if (anyOpen) return;
 
   chatUnread[type]++;
-  const badge = $(badgeId);
-  if (badge) {
-    badge.textContent = chatUnread[type];
-    badge.classList.remove("hidden");
-  }
+  badgeIds.forEach(badgeId => {
+    const badge = $(badgeId);
+    if (badge) {
+      badge.textContent = chatUnread[type];
+      badge.classList.remove("hidden");
+    }
+  });
 
-  // Show brief popup notification
   const notif = $(notifId);
   if (notif) {
     notif.classList.remove("hidden");
@@ -639,10 +641,14 @@ function notifyChat(type) {
 
 function clearChatBadge(type) {
   chatUnread[type] = 0;
-  const badgeId = type === "team" ? "team-chat-badge" : "global-chat-badge";
+  const badgeIds = type === "team"
+    ? ["team-chat-badge", "words-team-chat-badge"]
+    : ["global-chat-badge"];
   const notifId = type === "team" ? "team-chat-notif" : "global-chat-notif";
-  const badge = $(badgeId);
-  if (badge) badge.classList.add("hidden");
+  badgeIds.forEach(badgeId => {
+    const badge = $(badgeId);
+    if (badge) badge.classList.add("hidden");
+  });
   const notif = $(notifId);
   if (notif) notif.classList.add("hidden");
 }
