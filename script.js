@@ -983,11 +983,6 @@ $("guess-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("btn-guess").click();
 });
 
-// End Turn (Team Battle leaders)
-$("btn-end-turn").addEventListener("click", () => {
-  send({ type: "endTurn" });
-});
-
 // =============================================================
 // Teammate Suggestion Controls
 // =============================================================

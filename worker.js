@@ -171,7 +171,6 @@ export class GameRoom {
       case "setLeader":      await this.handleSetLeader(ws, username, data.target, room); break;
       case "startTeamGame":  await this.handleStartTeamGame(ws, username, room); break;
       case "suggestAction":  await this.handleSuggestAction(ws, username, data, room); break;
-      case "endTurn":        await this.handleEndTurn(ws, username, room); break;
       case "teamChat":       await this.handleTeamChat(ws, username, data.message, room); break;
       case "globalChat":     await this.handleGlobalChat(ws, username, data.message, room); break;
       case "reaction":       await this.handleReaction(ws, username, data.emoji, room); break;
@@ -516,40 +515,6 @@ export class GameRoom {
     room.currentTurn = leader;
   }
 
-  async handleEndTurn(ws, username, room) {
-    if (room.phase !== "playing") {
-      ws.send(JSON.stringify({ type: "error", message: "Game is not in progress." }));
-      return;
-    }
-
-    if (room.gameMode === "team") {
-      // In team mode, only the active team's leader can end the turn.
-      const myTeam = ["A", "B"].find(t => room.teams[t]?.members.includes(username));
-      if (!myTeam || room.teamTurn !== myTeam) {
-        ws.send(JSON.stringify({ type: "error", message: "It's not your team's turn." }));
-        return;
-      }
-      if (room.teams[myTeam].leader !== username) {
-        ws.send(JSON.stringify({ type: "error", message: "Only the team leader can end the turn." }));
-        return;
-      }
-      // Ensure currentTurn is synchronized with the active leader before advancing
-      room.currentTurn = username;
-    } else {
-      if (room.currentTurn !== username) {
-        ws.send(JSON.stringify({ type: "error", message: "It's not your turn." }));
-        return;
-      }
-    }
-
-    if (room.gameMode === "team") {
-      this.advanceTeamTurn(room);
-    } else {
-      room.currentTurn = getNextPlayer(room);
-    }
-
-    await this.saveState(room);
-    this.broadcast(room, { type: "state", room: sanitizeRoom(room) });
   }
 
   async handleSubmitWord(ws, username, word, room) {
@@ -747,8 +712,7 @@ export class GameRoom {
     this.broadcast(room, { type: "letterResult", asker: username, target: target.username, letter: L, found });
 
     if (room.gameMode === "team") {
-      // Stay on same team's leader after a letter ask (turn passes after explicit end or guess)
-      // (leader keeps going until they end turn)
+      this.advanceTeamTurn(room);
     } else {
       room.currentTurn = getNextPlayer(room);
     }
