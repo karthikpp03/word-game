@@ -1157,6 +1157,8 @@ function spawnFloatingReaction(emoji) {
 function renderEnded() {
   clearInterval(countdownInterval);
   showScreen("ended");
+  // 🎉 Winner confetti burst
+  setTimeout(spawnConfetti, 200);
   const room = state.room;
   const isTeamMode = room.gameMode === "team";
 
@@ -1251,6 +1253,41 @@ function send(data) {
 }
 
 // =============================================================
+// Visual FX Helpers
+// =============================================================
+
+function spawnConfetti() {
+  const layer = $("reaction-float-layer");
+  const CONFETTI = ["🎉","✨","🌟","💜","🔵","🟣","⭐","💫","🎊","🎈"];
+  const count = 22;
+  for (let i = 0; i < count; i++) {
+    setTimeout(() => {
+      const el = document.createElement("div");
+      el.className = "confetti-piece";
+      el.textContent = CONFETTI[Math.floor(Math.random() * CONFETTI.length)];
+      el.style.cssText = `
+        position:absolute;
+        left:${5 + Math.random()*88}%;
+        bottom:0;
+        font-size:${1.2 + Math.random()*1.4}rem;
+        animation: confettiBurst ${1.6 + Math.random()*1.2}s cubic-bezier(0.25,0.46,0.45,0.94) forwards;
+        animation-delay:${Math.random()*0.4}s;
+        pointer-events:none;
+      `;
+      layer.appendChild(el);
+      setTimeout(() => el.remove(), 3500);
+    }, i * 40);
+  }
+}
+
+function flashTurnChange() {
+  const banner = $("turn-banner");
+  if (!banner) return;
+  banner.classList.add("turn-flash");
+  setTimeout(() => banner.classList.remove("turn-flash"), 500);
+}
+
+// =============================================================
 // Background Particle Animation
 // =============================================================
 (function initParticles() {
@@ -1258,14 +1295,8 @@ function send(data) {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
 
-  const particles = [];
-  const PARTICLE_COUNT = 55;
-  const COLORS = [
-    "rgba(99,102,241,",
-    "rgba(168,85,247,",
-    "rgba(6,182,212,",
-    "rgba(20,184,166,",
-  ];
+  const W = () => canvas.width;
+  const H = () => canvas.height;
 
   function resize() {
     canvas.width  = window.innerWidth;
@@ -1274,33 +1305,95 @@ function send(data) {
   resize();
   window.addEventListener("resize", resize);
 
-  for (let i = 0; i < PARTICLE_COUNT; i++) {
-    particles.push({
-      x:     Math.random() * window.innerWidth,
-      y:     Math.random() * window.innerHeight,
-      r:     1 + Math.random() * 2.5,
-      dx:    (Math.random() - 0.5) * 0.35,
-      dy:    (Math.random() - 0.5) * 0.35,
-      color: COLORS[Math.floor(Math.random() * COLORS.length)],
-      alpha: 0.15 + Math.random() * 0.3,
-    });
-  }
+  // ── Floating particles ────────────────────────────
+  const COLORS = [
+    [99, 102, 241],   // indigo
+    [168, 85, 247],   // purple
+    [6, 182, 212],    // cyan
+    [20, 184, 166],   // teal
+    [139, 92, 246],   // violet
+  ];
+  const particles = Array.from({ length: 65 }, () => {
+    const c = COLORS[Math.floor(Math.random() * COLORS.length)];
+    return {
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      r: 0.8 + Math.random() * 2.2,
+      dx: (Math.random() - 0.5) * 0.28,
+      dy: (Math.random() - 0.5) * 0.28,
+      c,
+      alpha: 0.12 + Math.random() * 0.28,
+      pulseSpeed: 0.008 + Math.random() * 0.012,
+      pulseT: Math.random() * Math.PI * 2,
+    };
+  });
+
+  // ── Slow-drifting ambient orbs ────────────────────
+  const orbs = [
+    { x: 0.15, y: 0.25, r: 180, c: [99,102,241], a: 0.04, dx: 0.00012, dy: 0.00008 },
+    { x: 0.80, y: 0.15, r: 220, c: [168,85,247], a: 0.035, dx: -0.0001, dy: 0.00012 },
+    { x: 0.50, y: 0.80, r: 160, c: [6,182,212],  a: 0.04, dx: 0.00008, dy: -0.0001 },
+    { x: 0.90, y: 0.65, r: 140, c: [139,92,246], a: 0.03, dx: -0.00012, dy: -0.00008 },
+  ];
+
+  // ── Connection lines ──────────────────────────────
+  const CONNECT_DIST = 120;
+
+  let t = 0;
 
   function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    t++;
+    ctx.clearRect(0, 0, W(), H());
+
+    // Draw ambient orbs
+    for (const o of orbs) {
+      o.x += o.dx; o.y += o.dy;
+      if (o.x < 0 || o.x > 1) o.dx *= -1;
+      if (o.y < 0 || o.y > 1) o.dy *= -1;
+      const grd = ctx.createRadialGradient(o.x*W(), o.y*H(), 0, o.x*W(), o.y*H(), o.r);
+      grd.addColorStop(0, `rgba(${o.c.join(',')},${o.a})`);
+      grd.addColorStop(1, `rgba(${o.c.join(',')},0)`);
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(o.x*W(), o.y*H(), o.r, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // Draw connection lines between close particles
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const pi = particles[i], pj = particles[j];
+        const dx = pi.x - pj.x, dy = pi.y - pj.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < CONNECT_DIST) {
+          const lineAlpha = (1 - dist / CONNECT_DIST) * 0.06;
+          ctx.strokeStyle = `rgba(${pi.c.join(',')},${lineAlpha})`;
+          ctx.lineWidth = 0.6;
+          ctx.beginPath();
+          ctx.moveTo(pi.x, pi.y);
+          ctx.lineTo(pj.x, pj.y);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Draw particles with breathing alpha
     for (const p of particles) {
+      p.pulseT += p.pulseSpeed;
+      const a = p.alpha * (0.7 + 0.3 * Math.sin(p.pulseT));
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = p.color + p.alpha + ")";
+      ctx.fillStyle = `rgba(${p.c.join(',')},${a})`;
       ctx.fill();
 
       p.x += p.dx;
       p.y += p.dy;
-      if (p.x < -10)               p.x = canvas.width + 10;
-      if (p.x > canvas.width + 10)  p.x = -10;
-      if (p.y < -10)               p.y = canvas.height + 10;
-      if (p.y > canvas.height + 10) p.y = -10;
+      if (p.x < -10)      p.x = W() + 10;
+      if (p.x > W() + 10) p.x = -10;
+      if (p.y < -10)      p.y = H() + 10;
+      if (p.y > H() + 10) p.y = -10;
     }
+
     requestAnimationFrame(draw);
   }
   draw();
