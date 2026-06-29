@@ -483,11 +483,7 @@ export class GameRoom {
   }
 
   async handleGlobalChat(ws, username, message, room) {
-    if (room.gameMode !== "team") {
-      ws.send(JSON.stringify({ type: "error", message: "Global Chat is only available in Team Battle." }));
-      return;
-    }
-    // Global Chat is only available once gameplay starts.
+    // Global Chat is available in both Classic and Team Battle during gameplay.
     if (room.phase !== "playing") {
       ws.send(JSON.stringify({ type: "error", message: "Global Chat is only available during gameplay." }));
       return;

@@ -21,8 +21,21 @@ const state = {
 // Screen Management
 // =============================================================
 function showScreen(id) {
-  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
-  document.getElementById(`screen-${id}`).classList.add("active");
+  const next = document.getElementById(`screen-${id}`);
+  const current = document.querySelector(".screen.active");
+
+  if (current && current !== next) {
+    current.classList.add("leaving");
+    current.addEventListener("animationend", () => {
+      current.classList.remove("active", "leaving");
+    }, { once: true });
+  } else if (current && current !== next) {
+    current.classList.remove("active");
+  }
+
+  if (!next.classList.contains("active")) {
+    next.classList.add("active");
+  }
 }
 
 // =============================================================
@@ -791,18 +804,24 @@ let countdownInterval = null;
 function renderCountdown() {
   showScreen("countdown");
   let n = 5;
-  $("countdown-number").textContent = n;
+  const el = $("countdown-number");
+
+  function popNum(val) {
+    el.style.animation = "none";
+    el.textContent = val;
+    void el.offsetWidth; // force reflow
+    el.style.animation = "countPop 0.45s cubic-bezier(0.34,1.56,0.64,1) both";
+  }
 
   clearInterval(countdownInterval);
+  popNum(n);
+
   countdownInterval = setInterval(() => {
     n--;
     if (n <= 0) {
       clearInterval(countdownInterval);
     } else {
-      const el = $("countdown-number");
-      el.style.animation = "none";
-      el.textContent = n;
-      requestAnimationFrame(() => { el.style.animation = ""; });
+      popNum(n);
     }
   }, 1000);
 }
@@ -816,6 +835,13 @@ function renderPlaying() {
   const room = state.room;
   const isTeamMode = room.gameMode === "team";
   const isMyTurn = room.currentTurn === state.username;
+
+  // Flash turn banner when turn changes
+  const turnKey = isTeamMode ? room.teamTurn : room.currentTurn;
+  if (renderPlaying._lastTurn !== undefined && renderPlaying._lastTurn !== turnKey) {
+    flashTurnChange();
+  }
+  renderPlaying._lastTurn = turnKey;
 
   // Team status banner
   const teamBanner = $("team-status-banner");
